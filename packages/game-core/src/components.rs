@@ -1,4 +1,5 @@
 use bevy_ecs::component::Component;
+use bevy_ecs::entity::Entity;
 use serde::{Deserialize, Serialize};
 
 #[derive(Component, Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
@@ -93,6 +94,8 @@ pub enum TaskKind {
 #[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Task {
     pub kind: TaskKind,
+    pub building_x: i32,
+    pub building_y: i32,
     pub target_x: i32,
     pub target_y: i32,
 }
@@ -101,6 +104,8 @@ impl Default for Task {
     fn default() -> Self {
         Self {
             kind: TaskKind::Idle,
+            building_x: 0,
+            building_y: 0,
             target_x: 0,
             target_y: 0,
         }
@@ -115,6 +120,11 @@ pub struct Colonist;
 
 #[derive(Component)]
 pub struct Building;
+
+#[derive(Component, Default)]
+pub struct BedOccupancy {
+    pub reserved_by: Option<Entity>,
+}
 
 #[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct BerrySupply {

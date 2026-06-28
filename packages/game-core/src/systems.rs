@@ -1,10 +1,12 @@
+use std::collections::HashSet;
+
 use bevy_ecs::prelude::*;
 
 use crate::components::{
-    BerrySupply, BuildingType, Colonist, ColonistId, NeedKind, Needs, Path, Position, Task,
-    TaskKind,
+    BedOccupancy, BerrySupply, BuildingType, Colonist, ColonistId, NeedKind, Needs, Path, Position,
+    Task, TaskKind,
 };
-use crate::pathfinding::find_path;
+use crate::pathfinding::{best_adjacent_stand, find_path};
 use crate::world::{
     WorldGrid, FOOD_DECAY_PER_SEC, MOVE_SPEED, NEED_RESTORE, NEED_THRESHOLD, SLEEP_DECAY_PER_SEC,
     WORLD_SIZE,
@@ -51,18 +53,29 @@ pub fn needs_decay(world: &mut World, dt: f32) {
     }
 }
 
+struct PendingAssignment {
+    entity: Entity,
+    task_kind: TaskKind,
+    building_x: i32,
+    building_y: i32,
+    target_x: i32,
+    target_y: i32,
+    waypoints: Vec<(i32, i32)>,
+    bed_entity: Option<Entity>,
+}
+
 pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
-    let buildings: Vec<(i32, i32, BuildingType)> = {
+    let berry_bushes: Vec<(i32, i32)> = {
         let mut q = world.query::<(&Position, &BuildingType, Option<&BerrySupply>)>();
         q.iter(world)
             .filter_map(|(pos, bt, supply)| {
+                if *bt != BuildingType::BerryBush {
+                    return None;
+                }
                 let (gx, gy) = pos.grid_cell();
-                let available = match bt {
-                    BuildingType::BerryBush => supply.map(|s| s.remaining > 0).unwrap_or(false),
-                    _ => true,
-                };
+                let available = supply.map(|s| s.remaining > 0).unwrap_or(false);
                 if available {
-                    Some((gx, gy, *bt))
+                    Some((gx, gy))
                 } else {
                     None
                 }
@@ -70,15 +83,24 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
             .collect()
     };
 
-    let mut colonists = world.query::<(
-        Entity,
-        &Position,
-        &Needs,
-        &mut Task,
-        &mut Path,
-    )>();
+    let free_beds: Vec<(Entity, i32, i32)> = {
+        let mut q = world.query::<(Entity, &Position, &BuildingType, &BedOccupancy)>();
+        q.iter(world)
+            .filter_map(|(entity, pos, bt, occ)| {
+                if *bt != BuildingType::Bed || occ.reserved_by.is_some() {
+                    return None;
+                }
+                let (gx, gy) = pos.grid_cell();
+                Some((entity, gx, gy))
+            })
+            .collect()
+    };
 
-    for (entity, pos, needs, mut task, mut path) in colonists.iter_mut(world) {
+    let mut reserved_beds: HashSet<Entity> = HashSet::new();
+    let mut pending: Vec<PendingAssignment> = Vec::new();
+
+    let mut colonists = world.query::<(Entity, &Position, &Needs, &Task)>();
+    for (entity, pos, needs, task) in colonists.iter(world) {
         if !matches!(task.kind, TaskKind::Idle) {
             continue;
         }
@@ -96,45 +118,94 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
         };
 
         let (gx, gy) = pos.grid_cell();
-        let target = nearest_building_for_need(gx, gy, need_kind, &buildings);
-        let Some((tx, ty, _)) = target else {
+
+        let assignment = match need_kind {
+            NeedKind::Food => nearest_eat_assignment(grid, (gx, gy), &berry_bushes).map(
+                |((bx, by), (tx, ty))| (TaskKind::Eat, bx, by, tx, ty, None),
+            ),
+            NeedKind::Sleep => nearest_free_bed((gx, gy), &free_beds, &reserved_beds).map(
+                |(bed_entity, bx, by)| (TaskKind::Sleep, bx, by, bx, by, Some(bed_entity)),
+            ),
+        };
+
+        let Some((task_kind, building_x, building_y, target_x, target_y, bed_entity)) =
+            assignment
+        else {
             continue;
         };
 
-        let task_kind = match need_kind {
-            NeedKind::Food => TaskKind::Eat,
-            NeedKind::Sleep => TaskKind::Sleep,
-        };
-
-        if let Some(waypoints) = find_path(grid, (gx, gy), (tx, ty)) {
-            if waypoints.len() > 1 {
-                path.waypoints = waypoints[1..].to_vec();
+        if let Some(waypoints) = find_path(grid, (gx, gy), (target_x, target_y)) {
+            let path_waypoints = if waypoints.len() > 1 {
+                waypoints[1..].to_vec()
             } else {
-                path.waypoints = vec![(tx, ty)];
+                vec![(target_x, target_y)]
+            };
+
+            if let Some(bed_entity) = bed_entity {
+                reserved_beds.insert(bed_entity);
             }
+
+            pending.push(PendingAssignment {
+                entity,
+                task_kind,
+                building_x,
+                building_y,
+                target_x,
+                target_y,
+                waypoints: path_waypoints,
+                bed_entity,
+            });
+        }
+    }
+
+    for assignment in pending {
+        if let Some(mut task) = world.get_mut::<Task>(assignment.entity) {
+            task.kind = assignment.task_kind;
+            task.building_x = assignment.building_x;
+            task.building_y = assignment.building_y;
+            task.target_x = assignment.target_x;
+            task.target_y = assignment.target_y;
+        }
+        if let Some(mut path) = world.get_mut::<Path>(assignment.entity) {
+            path.waypoints = assignment.waypoints;
             path.index = 0;
-            task.kind = task_kind;
-            task.target_x = tx;
-            task.target_y = ty;
-        } else {
-            path.clear();
-            task.kind = TaskKind::Idle;
-            let _ = entity;
+        }
+        if let Some(bed_entity) = assignment.bed_entity {
+            if let Some(mut occ) = world.get_mut::<BedOccupancy>(bed_entity) {
+                occ.reserved_by = Some(assignment.entity);
+            }
         }
     }
 }
 
-fn nearest_building_for_need(
-    x: i32,
-    y: i32,
-    need: NeedKind,
-    buildings: &[(i32, i32, BuildingType)],
-) -> Option<(i32, i32, BuildingType)> {
-    buildings
+fn nearest_eat_assignment(
+    grid: &WorldGrid,
+    from: (i32, i32),
+    bushes: &[(i32, i32)],
+) -> Option<((i32, i32), (i32, i32))> {
+    let mut candidates: Vec<((i32, i32), i32)> = bushes
         .iter()
-        .filter(|(_, _, bt)| bt.satisfies_need() == Some(need))
-        .min_by_key(|(bx, by, _)| (bx - x).abs() + (by - y).abs())
-        .map(|(bx, by, bt)| (*bx, *by, *bt))
+        .map(|&(bx, by)| ((bx, by), (bx - from.0).abs() + (by - from.1).abs()))
+        .collect();
+    candidates.sort_by_key(|(_, dist)| *dist);
+
+    for ((bx, by), _) in candidates {
+        if let Some(stand) = best_adjacent_stand(grid, (bx, by), from) {
+            return Some(((bx, by), stand));
+        }
+    }
+    None
+}
+
+fn nearest_free_bed(
+    from: (i32, i32),
+    beds: &[(Entity, i32, i32)],
+    reserved: &HashSet<Entity>,
+) -> Option<(Entity, i32, i32)> {
+    beds.iter()
+        .filter(|(entity, _, _)| !reserved.contains(entity))
+        .min_by_key(|(_, bx, by)| (bx - from.0).abs() + (by - from.1).abs())
+        .map(|(entity, bx, by)| (*entity, *bx, *by))
 }
 
 pub fn colonist_movement(world: &mut World, dt: f32) {
@@ -165,7 +236,7 @@ pub fn colonist_movement(world: &mut World, dt: f32) {
 }
 
 pub fn task_execution(world: &mut World, grid: &mut WorldGrid) {
-    let completions: Vec<(Entity, TaskKind, i32, i32)> = {
+    let completions: Vec<(Entity, TaskKind, i32, i32, i32, i32)> = {
         let mut colonists = world.query::<(Entity, &Position, &Task, &Path)>();
         colonists
             .iter(world)
@@ -180,65 +251,100 @@ pub fn task_execution(world: &mut World, grid: &mut WorldGrid) {
                 if gx != task.target_x || gy != task.target_y {
                     return None;
                 }
-                Some((entity, task.kind, gx, gy))
+                Some((
+                    entity,
+                    task.kind,
+                    task.building_x,
+                    task.building_y,
+                    gx,
+                    gy,
+                ))
             })
             .collect()
     };
 
     let mut to_despawn: Vec<(Entity, i32, i32)> = Vec::new();
 
-    for (colonist_entity, kind, gx, gy) in completions {
+    for (colonist_entity, kind, building_x, building_y, gx, gy) in completions {
         match kind {
             TaskKind::Eat => {
-                let mut ate = false;
-                let mut depleted = false;
-                let mut building_entity = None;
+                let adjacent = (gx - building_x).abs() + (gy - building_y).abs() == 1;
 
-                if let Some(be) = building_entity_at(world, gx, gy) {
-                    if let Some(mut supply) = world.get_mut::<BerrySupply>(be) {
-                        if supply.remaining > 0 {
-                            supply.remaining -= 1;
-                            ate = true;
-                            depleted = supply.remaining == 0;
-                            building_entity = Some(be);
+                if adjacent {
+                    let mut ate = false;
+                    let mut depleted = false;
+                    let mut building_entity = None;
+
+                    if let Some(be) = building_entity_at(world, building_x, building_y) {
+                        if let Some(mut supply) = world.get_mut::<BerrySupply>(be) {
+                            if supply.remaining > 0 {
+                                supply.remaining -= 1;
+                                ate = true;
+                                depleted = supply.remaining == 0;
+                                building_entity = Some(be);
+                            }
                         }
                     }
-                }
 
-                if ate {
-                    if let Some(mut needs) = world.get_mut::<Needs>(colonist_entity) {
-                        needs.set(NeedKind::Food, NEED_RESTORE);
-                    }
-                    if depleted {
-                        if let Some(be) = building_entity {
-                            to_despawn.push((be, gx, gy));
+                    if ate {
+                        if let Some(mut needs) = world.get_mut::<Needs>(colonist_entity) {
+                            needs.set(NeedKind::Food, NEED_RESTORE);
+                        }
+                        if depleted {
+                            if let Some(be) = building_entity {
+                                to_despawn.push((be, building_x, building_y));
+                            }
                         }
                     }
                 }
             }
             TaskKind::Sleep => {
-                if grid.building_at(gx, gy) == Some(BuildingType::Bed) {
-                    if let Some(mut needs) = world.get_mut::<Needs>(colonist_entity) {
-                        needs.set(NeedKind::Sleep, NEED_RESTORE);
+                if gx == building_x
+                    && gy == building_y
+                    && grid.building_at(gx, gy) == Some(BuildingType::Bed)
+                {
+                    let reserved = building_entity_at(world, building_x, building_y).and_then(
+                        |be| world.get::<BedOccupancy>(be).and_then(|o| o.reserved_by),
+                    );
+                    if reserved == Some(colonist_entity) {
+                        if let Some(mut needs) = world.get_mut::<Needs>(colonist_entity) {
+                            needs.set(NeedKind::Sleep, NEED_RESTORE);
+                        }
                     }
                 }
             }
             TaskKind::Idle => {}
         }
 
-        if let Some(mut task) = world.get_mut::<Task>(colonist_entity) {
-            task.kind = TaskKind::Idle;
-            task.target_x = 0;
-            task.target_y = 0;
-        }
-        if let Some(mut path) = world.get_mut::<Path>(colonist_entity) {
-            path.clear();
-        }
+        release_bed_reservation(world, colonist_entity);
+        clear_task(world, colonist_entity);
     }
 
     for (entity, gx, gy) in to_despawn {
         grid.remove_building(gx, gy);
         let _ = world.despawn(entity);
+    }
+}
+
+fn release_bed_reservation(world: &mut World, colonist: Entity) {
+    let mut beds = world.query::<&mut BedOccupancy>();
+    for mut occ in beds.iter_mut(world) {
+        if occ.reserved_by == Some(colonist) {
+            occ.reserved_by = None;
+        }
+    }
+}
+
+fn clear_task(world: &mut World, colonist: Entity) {
+    if let Some(mut task) = world.get_mut::<Task>(colonist) {
+        task.kind = TaskKind::Idle;
+        task.building_x = 0;
+        task.building_y = 0;
+        task.target_x = 0;
+        task.target_y = 0;
+    }
+    if let Some(mut path) = world.get_mut::<Path>(colonist) {
+        path.clear();
     }
 }
 

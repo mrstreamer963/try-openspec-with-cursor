@@ -28,9 +28,11 @@ function startLoop(): void {
     if (!game || paused) return;
     const dt = BASE_DT * speed;
     const json = game.tick(dt);
-    const snapshot = parseOutgoingEvent(json);
-    if (snapshot) {
-      postMessage({ kind: 'snapshot', data: snapshot } satisfies WorkerMessage);
+    const parsed = parseOutgoingEvent(json);
+    if (parsed?.kind === 'snapshot') {
+      postMessage({ kind: 'snapshot', data: parsed.data } satisfies WorkerMessage);
+    } else if (parsed?.kind === 'error') {
+      postMessage({ kind: 'error', message: parsed.message } satisfies WorkerMessage);
     }
   }, TICK_MS);
 }
@@ -39,7 +41,12 @@ function handleEvent(event: IncomingEvent): void {
   if (!game) return;
 
   const json = serializeIncomingEvent(event);
-  game.handle_event(json);
+  const responseJson = game.handle_event(json);
+  const response = parseOutgoingEvent(responseJson);
+  if (response?.kind === 'error') {
+    postMessage({ kind: 'error', message: response.message } satisfies WorkerMessage);
+    return;
+  }
 
   if (event.type === 'set_paused') {
     paused = event.paused;
@@ -49,8 +56,8 @@ function handleEvent(event: IncomingEvent): void {
 
   const snapshotJson = game.get_snapshot();
   const snapshot = parseOutgoingEvent(snapshotJson);
-  if (snapshot) {
-    postMessage({ kind: 'snapshot', data: snapshot } satisfies WorkerMessage);
+  if (snapshot?.kind === 'snapshot') {
+    postMessage({ kind: 'snapshot', data: snapshot.data } satisfies WorkerMessage);
   }
 }
 
@@ -60,8 +67,8 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMessage>) => {
     if (msg.kind === 'start') {
       await initGame();
       const snapshot = parseOutgoingEvent(game!.get_snapshot());
-      if (snapshot) {
-        postMessage({ kind: 'snapshot', data: snapshot } satisfies WorkerMessage);
+      if (snapshot?.kind === 'snapshot') {
+        postMessage({ kind: 'snapshot', data: snapshot.data } satisfies WorkerMessage);
       }
       postMessage({ kind: 'ready' } satisfies WorkerMessage);
       startLoop();

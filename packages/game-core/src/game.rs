@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use serde_json;
 use wasm_bindgen::prelude::*;
 
-use crate::components::{BerrySupply, BuildingType, ColonistId, Needs, Position, Task};
+use crate::components::{BedOccupancy, BerrySupply, BuildingType, ColonistId, Needs, Position, Task};
 use crate::events::{
     BuildingSnapshot, ColonistSnapshot, IncomingEvent, OutgoingEvent, StateSnapshot, TileSnapshot,
 };
@@ -42,7 +42,13 @@ impl Game {
                 self.dispatch(event);
                 String::new()
             }
-            Err(e) => format!(r#"{{"error":"{}"}}"#, e),
+            Err(e) => {
+                let event = OutgoingEvent::Error {
+                    message: e.to_string(),
+                };
+                serde_json::to_string(&event)
+                    .unwrap_or_else(|_| r#"{"type":"error","message":"unknown error"}"#.to_string())
+            }
         }
     }
 
@@ -85,6 +91,13 @@ impl Game {
                             position,
                             building,
                             BerrySupply::new(BERRIES_PER_BUSH),
+                        ));
+                    } else if building == BuildingType::Bed {
+                        self.world.spawn((
+                            crate::components::Building,
+                            position,
+                            building,
+                            BedOccupancy::default(),
                         ));
                     } else {
                         self.world.spawn((

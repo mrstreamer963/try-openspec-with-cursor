@@ -32,14 +32,16 @@ export interface StateSnapshot {
   speed: number;
 }
 
-export interface OutgoingEvent {
-  type: 'state_snapshot';
-  tiles: TileSnapshot[];
-  buildings: BuildingSnapshot[];
-  colonists: ColonistSnapshot[];
-  paused: boolean;
-  speed: number;
-}
+export type OutgoingEvent =
+  | {
+      type: 'state_snapshot';
+      tiles: TileSnapshot[];
+      buildings: BuildingSnapshot[];
+      colonists: ColonistSnapshot[];
+      paused: boolean;
+      speed: number;
+    }
+  | { type: 'error'; message: string };
 
 export type IncomingEvent =
   | { type: 'set_paused'; paused: boolean }

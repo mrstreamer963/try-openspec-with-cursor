@@ -110,3 +110,29 @@ fn reconstruct(came_from: &HashMap<Node, Node>, mut current: Node) -> Vec<(i32, 
     path.reverse();
     path
 }
+
+const ORTHOGONAL_DIRS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+
+/// Returns the orthogonally adjacent walkable cell reachable from `from` with the shortest path.
+pub fn best_adjacent_stand(
+    grid: &WorldGrid,
+    building: (i32, i32),
+    from: (i32, i32),
+) -> Option<(i32, i32)> {
+    let mut best: Option<((i32, i32), usize)> = None;
+
+    for (dx, dy) in ORTHOGONAL_DIRS {
+        let stand = (building.0 + dx, building.1 + dy);
+        if !grid.is_walkable(stand.0, stand.1) {
+            continue;
+        }
+        if let Some(path) = find_path(grid, from, stand) {
+            let len = path.len();
+            if best.map(|(_, best_len)| len < best_len).unwrap_or(true) {
+                best = Some((stand, len));
+            }
+        }
+    }
+
+    best.map(|(stand, _)| stand)
+}

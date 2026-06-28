@@ -9,17 +9,29 @@ export type MainToWorkerMessage =
   | { kind: 'event'; event: IncomingEvent }
   | { kind: 'start' };
 
-export function parseOutgoingEvent(json: string): StateSnapshot | null {
+export type ParsedOutgoingEvent =
+  | { kind: 'snapshot'; data: StateSnapshot }
+  | { kind: 'error'; message: string };
+
+export function parseOutgoingEvent(json: string): ParsedOutgoingEvent | null {
+  if (!json) return null;
+
   try {
-    const parsed = JSON.parse(json) as OutgoingEvent & { type?: string };
+    const parsed = JSON.parse(json) as OutgoingEvent;
     if (parsed.type === 'state_snapshot') {
       return {
-        tiles: parsed.tiles,
-        buildings: parsed.buildings,
-        colonists: parsed.colonists,
-        paused: parsed.paused,
-        speed: parsed.speed,
+        kind: 'snapshot',
+        data: {
+          tiles: parsed.tiles,
+          buildings: parsed.buildings,
+          colonists: parsed.colonists,
+          paused: parsed.paused,
+          speed: parsed.speed,
+        },
       };
+    }
+    if (parsed.type === 'error') {
+      return { kind: 'error', message: parsed.message };
     }
     return null;
   } catch {
