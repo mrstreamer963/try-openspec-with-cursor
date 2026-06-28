@@ -112,3 +112,7 @@ pub const MOVE_SPEED: f32 = 4.0;
 pub const WANDER_MIN_RADIUS: i32 = 3;
 pub const WANDER_RADIUS: i32 = 10;
 pub const WANDER_PICK_ATTEMPTS: usize = 8;
+/// Max Manhattan ring from a bed when searching for a vacate cell after sleep.
+pub const VACATE_SEARCH_RADIUS: i32 = 5;
+/// Time spent on the bed tile before sleep need is restored.
+pub const SLEEP_ON_BED_SEC: f32 = 2.0;

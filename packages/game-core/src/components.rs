@@ -157,6 +157,12 @@ pub struct BedOccupancy {
     pub reserved_by: Option<Entity>,
 }
 
+/// Countdown while a colonist rests on a bed tile before sleep completes.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct SleepingOnBed {
+    pub remaining: f32,
+}
+
 #[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct BerrySupply {
     pub remaining: u8,

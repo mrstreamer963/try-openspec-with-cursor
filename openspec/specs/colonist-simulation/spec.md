@@ -62,7 +62,11 @@ At most one colonist SHALL occupy a grid cell when movement completes a step to 
 
 #### Scenario: Second colonist waits for occupied cell
 - **WHEN** a colonist completes movement toward a waypoint cell that is already occupied by another colonist's settled position
-- **THEN** the colonist does not snap to that cell, does not advance its path index, and remains at its previous position until the cell is free
+- **THEN** the colonist does not snap to that cell, does not advance its path index, does not partial-step toward that cell, and remains at its previous position until the cell is free
+
+#### Scenario: No drift into occupied waypoint
+- **WHEN** a colonist is moving toward a waypoint cell that is occupied by another colonist
+- **THEN** the colonist holds position rather than advancing fractionally toward the blocked cell
 
 #### Scenario: Idle colonist occupies its cell
 - **WHEN** a colonist is idle (including after completing an Eat task on a stand tile)
@@ -88,7 +92,7 @@ When a colonist's need drops below the critical threshold, the simulation SHALL 
 
 #### Scenario: Auto-assign sleep task
 - **WHEN** a colonist's Sleep need drops below the threshold and an unoccupied Bed exists
-- **THEN** the colonist is assigned a Sleep task targeting the nearest such Bed and the bed is reserved for that colonist
+- **THEN** the colonist is assigned a Sleep task with path destination on the Bed tile, and the bed is reserved for that colonist
 
 #### Scenario: Food priority when both needs critical
 - **WHEN** a colonist's Food and Sleep needs are both below the threshold and both a satisfiable BerryBush and an unoccupied Bed exist
@@ -104,7 +108,7 @@ When a colonist's need drops below the critical threshold, the simulation SHALL 
 
 #### Scenario: No need task when nothing satisfiable
 - **WHEN** a colonist has one or more needs below the threshold but no satisfiable target and valid path exist for any critical need
-- **THEN** the colonist remains idle with no Eat or Sleep task assigned
+- **THEN** the colonist remains idle with no Eat or Sleep task assigned and the simulation assigns idle wander movement if the colonist has no remaining path waypoints
 
 #### Scenario: Need assignment replaces wander path
 - **WHEN** an idle colonist is following a wander path and a critical need becomes assignable (including via fallback)
@@ -115,11 +119,15 @@ When a colonist's need drops below the critical threshold, the simulation SHALL 
 - **THEN** the colonist remains idle and the simulation assigns idle wander movement (see Idle wander requirement)
 
 ### Requirement: Idle wander
-When a colonist is idle with no Eat, Sleep, or Build assignment and no active path, the simulation SHALL assign a path to a random nearby walkable cell within a configurable wander radius.
+When a colonist is idle with no Eat, Sleep, or Build assignment and no active path, the simulation SHALL assign a path to a random nearby walkable cell within a configurable wander radius. This includes colonists whose critical needs cannot be satisfied on the current assignment pass.
 
 #### Scenario: Wander when fully idle
 - **WHEN** a colonist is idle, all needs are above threshold, no unassigned construction orders exist, and the colonist has no remaining path waypoints
 - **THEN** the colonist is assigned a path to a random walkable cell within the wander radius
+
+#### Scenario: Wander when critical needs unsatisfiable
+- **WHEN** a colonist is idle, one or more needs are below the critical threshold, no Eat or Sleep task can be assigned, and the colonist has no remaining path waypoints
+- **THEN** the colonist is assigned a wander path while remaining task kind Idle
 
 #### Scenario: New wander target on arrival
 - **WHEN** an idle colonist completes its wander path and remains idle
@@ -199,7 +207,23 @@ When a colonist reaches its task destination, the simulation SHALL execute the t
 
 #### Scenario: Complete sleep task
 - **WHEN** a colonist with a Sleep task arrives at a Bed tile reserved for that colonist
-- **THEN** the colonist's Sleep need is restored, the bed reservation is released, and the task is cleared
+- **THEN** the colonist rests on the bed tile for `SLEEP_ON_BED_SEC` seconds, then Sleep need is restored, the bed reservation is released, and the task is cleared
+
+#### Scenario: Resting on bed tile
+- **WHEN** a colonist is in the resting period after arriving on a reserved Bed tile
+- **THEN** the colonist remains on the bed tile with task kind Sleep until resting completes
+
+#### Scenario: Vacate bed tile after sleep
+- **WHEN** a colonist finishes resting on a Bed tile and a free walkable cell exists within the vacate search radius
+- **THEN** the colonist walks (via pathfinding that avoids occupied cells) to the nearest such cell, searching by expanding Manhattan rings from the bed (ring 1 first, then wider rings up to `VACATE_SEARCH_RADIUS`)
+
+#### Scenario: No vacate cell after sleep
+- **WHEN** a colonist finishes resting on a Bed tile but no free walkable cell exists within the vacate search radius
+- **THEN** Sleep need is still restored, the bed reservation is released, the task is cleared, and the colonist remains on the bed tile
+
+#### Scenario: Wander after sleep vacate
+- **WHEN** a colonist finishes resting, walks off the bed via the vacate path, and has no assignable Eat or Sleep task
+- **THEN** the simulation assigns idle wander movement on the next assignment pass after the vacate path completes
 
 ### Requirement: Eat fails on depleted bush
 When a colonist completes an Eat task at a stand tile but the adjacent bush has no berries, the simulation SHALL not restore Food and SHALL clear the task.
