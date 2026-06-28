@@ -10,7 +10,7 @@ use crate::components::{
 use crate::pathfinding::{best_adjacent_stand, find_path};
 use crate::world::{
     WorldGrid, BERRIES_PER_BUSH, FOOD_DECAY_PER_SEC, MOVE_SPEED, NEED_RESTORE, NEED_THRESHOLD,
-    SLEEP_DECAY_PER_SEC, WORLD_SIZE,
+    SLEEP_DECAY_PER_SEC, WANDER_MIN_RADIUS, WANDER_PICK_ATTEMPTS, WANDER_RADIUS, WORLD_SIZE,
 };
 
 fn shuffled_indices(len: usize, count: usize) -> Vec<usize> {
@@ -59,6 +59,50 @@ fn stand_available_for_eat(
     reserved_stands: &HashSet<(i32, i32)>,
 ) -> bool {
     !reserved_stands.contains(&stand) && !occupancy.contains_key(&stand)
+}
+
+fn pick_wander_target(
+    grid: &WorldGrid,
+    from: (i32, i32),
+    occupied: &HashMap<(i32, i32), Entity>,
+    self_entity: Entity,
+) -> Option<Vec<(i32, i32)>> {
+    let mut candidates = Vec::new();
+    for dy in -WANDER_RADIUS..=WANDER_RADIUS {
+        for dx in -WANDER_RADIUS..=WANDER_RADIUS {
+            let manhattan = dx.abs() + dy.abs();
+            if manhattan < WANDER_MIN_RADIUS || manhattan > WANDER_RADIUS {
+                continue;
+            }
+            let cell = (from.0 + dx, from.1 + dy);
+            if !grid.is_walkable(cell.0, cell.1) {
+                continue;
+            }
+            if let Some(&occupant) = occupied.get(&cell) {
+                if occupant != self_entity {
+                    continue;
+                }
+            }
+            candidates.push(cell);
+        }
+    }
+
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let attempts = WANDER_PICK_ATTEMPTS.min(candidates.len());
+    for i in shuffled_indices(candidates.len(), attempts) {
+        let target = candidates[i];
+        if let Some(waypoints) = find_path(grid, from, target) {
+            return Some(if waypoints.len() > 1 {
+                waypoints[1..].to_vec()
+            } else {
+                vec![target]
+            });
+        }
+    }
+    None
 }
 
 pub fn spawn_colonists(world: &mut World, grid: &WorldGrid) -> u32 {
@@ -231,9 +275,10 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
     let mut reserved_stands: HashSet<(i32, i32)> = HashSet::new();
     let occupancy = colonist_occupancy_map(world);
     let mut pending: Vec<PendingAssignment> = Vec::new();
+    let mut pending_wander: Vec<(Entity, Vec<(i32, i32)>)> = Vec::new();
 
-    let mut colonists = world.query::<(Entity, &Position, &Needs, &Task)>();
-    for (entity, pos, needs, task) in colonists.iter(world) {
+    let mut colonists = world.query::<(Entity, &Position, &Needs, &Task, &Path)>();
+    for (entity, pos, needs, task, path) in colonists.iter(world) {
         if !matches!(task.kind, TaskKind::Idle) {
             continue;
         }
@@ -306,32 +351,37 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
             continue;
         }
 
-        let Some((site_entity, (bx, by), (sx, sy))) =
+        if let Some((site_entity, (bx, by), (sx, sy))) =
             nearest_build_assignment(grid, (gx, gy), &open_sites, &reserved_sites)
-        else {
+        {
+            if let Some(waypoints) = find_path(grid, (gx, gy), (sx, sy)) {
+                let path_waypoints = if waypoints.len() > 1 {
+                    waypoints[1..].to_vec()
+                } else {
+                    vec![(sx, sy)]
+                };
+
+                reserved_sites.insert(site_entity);
+
+                pending.push(PendingAssignment {
+                    entity,
+                    task_kind: TaskKind::Build,
+                    building_x: bx,
+                    building_y: by,
+                    target_x: sx,
+                    target_y: sy,
+                    waypoints: path_waypoints,
+                    bed_entity: None,
+                    site_entity: Some(site_entity),
+                });
+            }
             continue;
-        };
+        }
 
-        if let Some(waypoints) = find_path(grid, (gx, gy), (sx, sy)) {
-            let path_waypoints = if waypoints.len() > 1 {
-                waypoints[1..].to_vec()
-            } else {
-                vec![(sx, sy)]
-            };
-
-            reserved_sites.insert(site_entity);
-
-            pending.push(PendingAssignment {
-                entity,
-                task_kind: TaskKind::Build,
-                building_x: bx,
-                building_y: by,
-                target_x: sx,
-                target_y: sy,
-                waypoints: path_waypoints,
-                bed_entity: None,
-                site_entity: Some(site_entity),
-            });
+        if path.index >= path.waypoints.len() {
+            if let Some(waypoints) = pick_wander_target(grid, (gx, gy), &occupancy, entity) {
+                pending_wander.push((entity, waypoints));
+            }
         }
     }
 
@@ -356,6 +406,13 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
             if let Some(mut site) = world.get_mut::<ConstructionSite>(site_entity) {
                 site.reserved_by = Some(assignment.entity);
             }
+        }
+    }
+
+    for (entity, waypoints) in pending_wander {
+        if let Some(mut path) = world.get_mut::<Path>(entity) {
+            path.waypoints = waypoints;
+            path.index = 0;
         }
     }
 }
@@ -1148,5 +1205,142 @@ mod tests {
             .copied()
             .collect();
         assert_eq!(assigned.len(), 1);
+    }
+
+    #[test]
+    fn idle_colonist_gets_wander_path_when_no_needs_or_build() {
+        let grid = grass_grid();
+        let mut world = World::new();
+
+        let colonist = world
+            .spawn((
+                Colonist,
+                Position { x: 10.0, y: 10.0 },
+                Needs::new_full(),
+                Task::default(),
+                Path::default(),
+            ))
+            .id();
+
+        auto_assign_tasks(&mut world, &grid);
+
+        let path = world.get::<Path>(colonist).unwrap();
+        assert!(
+            !path.waypoints.is_empty(),
+            "idle colonist should receive a wander path"
+        );
+        assert_eq!(world.get::<Task>(colonist).unwrap().kind, TaskKind::Idle);
+    }
+
+    #[test]
+    fn wander_path_replaced_when_critical_need_triggers_eat() {
+        let mut grid = grass_grid();
+        assert!(grid.place_building(10, 10, BuildingType::BerryBush));
+
+        let mut world = World::new();
+        world.spawn((
+            Building,
+            Position {
+                x: 10.0,
+                y: 10.0,
+            },
+            BuildingType::BerryBush,
+            BerrySupply::new(3),
+        ));
+
+        let colonist = world
+            .spawn((
+                Colonist,
+                Position { x: 5.0, y: 10.0 },
+                Needs::new_full(),
+                Task::default(),
+                Path {
+                    waypoints: vec![(6, 10), (7, 10)],
+                    index: 0,
+                },
+            ))
+            .id();
+
+        if let Some(mut needs) = world.get_mut::<Needs>(colonist) {
+            needs.food = NEED_THRESHOLD - 1.0;
+        }
+
+        auto_assign_tasks(&mut world, &grid);
+
+        let task = world.get::<Task>(colonist).unwrap();
+        assert_eq!(task.kind, TaskKind::Eat);
+        let path = world.get::<Path>(colonist).unwrap();
+        assert_ne!(path.waypoints, vec![(6, 10), (7, 10)]);
+        assert!(!path.waypoints.is_empty());
+    }
+
+    #[test]
+    fn wander_target_excludes_current_and_occupied_cells() {
+        let grid = grass_grid();
+        let mut world = World::new();
+
+        let occupant = world
+            .spawn((
+                Colonist,
+                Position { x: 11.0, y: 10.0 },
+                Path::default(),
+            ))
+            .id();
+
+        let wanderer = world
+            .spawn((
+                Colonist,
+                Position { x: 10.0, y: 10.0 },
+                Path::default(),
+            ))
+            .id();
+
+        let occupancy = colonist_occupancy_map(&mut world);
+        let from = (10, 10);
+
+        for _ in 0..20 {
+            let Some(waypoints) = pick_wander_target(&grid, from, &occupancy, wanderer) else {
+                continue;
+            };
+            let target = waypoints.last().copied().unwrap();
+            let dist = (target.0 - from.0).abs() + (target.1 - from.1).abs();
+            assert!(
+                dist >= WANDER_MIN_RADIUS,
+                "wander must be at least {WANDER_MIN_RADIUS} cells away"
+            );
+            assert_ne!(
+                target,
+                (11, 10),
+                "wander must not target occupied cell"
+            );
+            assert_ne!(
+                occupancy.get(&target),
+                Some(&occupant),
+                "wander must not target another colonist's cell"
+            );
+        }
+    }
+
+    #[test]
+    fn wander_keeps_task_kind_idle() {
+        let grid = grass_grid();
+        let mut world = World::new();
+
+        let colonist = world
+            .spawn((
+                Colonist,
+                Position { x: 10.0, y: 10.0 },
+                Needs::new_full(),
+                Task::default(),
+                Path::default(),
+            ))
+            .id();
+
+        auto_assign_tasks(&mut world, &grid);
+
+        let task = world.get::<Task>(colonist).unwrap();
+        let path = world.get::<Path>(colonist).unwrap();
+        assert_eq!(task.kind, TaskKind::Idle);
+        assert!(!path.waypoints.is_empty());
     }
 }
