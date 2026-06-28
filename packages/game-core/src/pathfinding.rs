@@ -43,12 +43,28 @@ pub fn find_path(
     start: (i32, i32),
     goal: (i32, i32),
 ) -> Option<Vec<(i32, i32)>> {
+    find_path_avoiding(grid, start, goal, &[])
+}
+
+pub fn find_path_avoiding(
+    grid: &WorldGrid,
+    start: (i32, i32),
+    goal: (i32, i32),
+    blocked: &[(i32, i32)],
+) -> Option<Vec<(i32, i32)>> {
     if start == goal {
         return Some(vec![goal]);
     }
     if !grid.is_walkable(goal.0, goal.1) {
         return None;
     }
+
+    let is_blocked = |x: i32, y: i32| {
+        if (x, y) == goal {
+            return false;
+        }
+        blocked.iter().any(|&(bx, by)| bx == x && by == y)
+    };
 
     let start_node = Node {
         x: start.0,
@@ -83,7 +99,7 @@ pub fn find_path(
                 x: current.x + dx,
                 y: current.y + dy,
             };
-            if !grid.is_walkable(neighbor.x, neighbor.y) {
+            if !grid.is_walkable(neighbor.x, neighbor.y) || is_blocked(neighbor.x, neighbor.y) {
                 continue;
             }
 

@@ -12,7 +12,7 @@ use crate::events::{
 };
 use crate::systems::{
     auto_assign_tasks, colonist_movement, is_valid_build_tile, needs_decay, spawn_colonists,
-    task_execution,
+    task_execution, update_need_buffs,
 };
 use crate::world::{generate_world, WorldGrid, WORLD_SIZE};
 
@@ -65,6 +65,7 @@ impl Game {
         self.world.insert_resource(self.grid.clone());
 
         needs_decay(&mut self.world, dt);
+        update_need_buffs(&mut self.world);
         auto_assign_tasks(&mut self.world, &self.grid);
         colonist_movement(&mut self.world, dt);
         task_execution(&mut self.world, &mut self.grid);

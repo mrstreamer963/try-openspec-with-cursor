@@ -84,6 +84,12 @@ impl Needs {
     }
 }
 
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct Hungry;
+
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct WantsSleep;
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskKind {
     Idle,
