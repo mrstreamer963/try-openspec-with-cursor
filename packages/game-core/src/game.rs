@@ -51,12 +51,11 @@ impl Game {
             return self.snapshot_json();
         }
 
-        let scaled_dt = dt * self.speed;
         self.world.insert_resource(self.grid.clone());
 
-        needs_decay(&mut self.world, scaled_dt);
+        needs_decay(&mut self.world, dt);
         auto_assign_tasks(&mut self.world, &self.grid);
-        colonist_movement(&mut self.world, scaled_dt);
+        colonist_movement(&mut self.world, dt);
         task_execution(&mut self.world, &mut self.grid);
 
         self.snapshot_json()

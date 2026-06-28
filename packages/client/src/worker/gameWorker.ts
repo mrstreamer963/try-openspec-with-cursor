@@ -14,6 +14,7 @@ const BASE_DT = 0.05;
 let game: Game | null = null;
 let intervalId: ReturnType<typeof setInterval> | null = null;
 let paused = false;
+let speed = 1;
 
 async function initGame(): Promise<void> {
   await init(wasmUrl);
@@ -25,7 +26,7 @@ function startLoop(): void {
 
   intervalId = setInterval(() => {
     if (!game || paused) return;
-    const dt = BASE_DT;
+    const dt = BASE_DT * speed;
     const json = game.tick(dt);
     const snapshot = parseOutgoingEvent(json);
     if (snapshot) {
@@ -42,6 +43,8 @@ function handleEvent(event: IncomingEvent): void {
 
   if (event.type === 'set_paused') {
     paused = event.paused;
+  } else if (event.type === 'set_speed') {
+    speed = event.multiplier;
   }
 
   const snapshotJson = game.get_snapshot();
