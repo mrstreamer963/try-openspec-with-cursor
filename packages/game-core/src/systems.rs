@@ -7,7 +7,7 @@ use crate::components::{
     ConstructionSite, COLONIST_NAME_POOL, NeedKind, Needs, Path, Position, Task, TaskKind,
     BUILD_WORK_PER_TICK,
 };
-use crate::pathfinding::find_path;
+use crate::pathfinding::{best_adjacent_stand, find_path};
 use crate::world::{
     WorldGrid, BERRIES_PER_BUSH, FOOD_DECAY_PER_SEC, MOVE_SPEED, NEED_RESTORE, NEED_THRESHOLD,
     SLEEP_DECAY_PER_SEC, WORLD_SIZE,
@@ -152,7 +152,7 @@ struct PendingAssignment {
 
 pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
     preempt_build_for_critical_needs(world);
-    release_stuck_build_tasks(world);
+    release_stuck_tasks(world);
 
     let berry_bushes: Vec<(i32, i32)> = {
         let mut q = world.query::<(&Position, &BuildingType, Option<&BerrySupply>)>();
@@ -221,13 +221,13 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
         if let Some(need_kind) = need {
             let assignment = match need_kind {
                 NeedKind::Food => nearest_eat_assignment(grid, (gx, gy), &berry_bushes)
-                    .map(|(bx, by)| PendingAssignment {
+                    .map(|((bx, by), (sx, sy))| PendingAssignment {
                         entity,
                         task_kind: TaskKind::Eat,
                         building_x: bx,
                         building_y: by,
-                        target_x: bx,
-                        target_y: by,
+                        target_x: sx,
+                        target_y: sy,
                         waypoints: Vec::new(),
                         bed_entity: None,
                         site_entity: None,
@@ -267,17 +267,17 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
             continue;
         }
 
-        let Some((site_entity, bx, by)) =
-            nearest_unassigned_site((gx, gy), &open_sites, &reserved_sites)
+        let Some((site_entity, (bx, by), (sx, sy))) =
+            nearest_build_assignment(grid, (gx, gy), &open_sites, &reserved_sites)
         else {
             continue;
         };
 
-        if let Some(waypoints) = find_path(grid, (gx, gy), (bx, by)) {
+        if let Some(waypoints) = find_path(grid, (gx, gy), (sx, sy)) {
             let path_waypoints = if waypoints.len() > 1 {
                 waypoints[1..].to_vec()
             } else {
-                vec![(bx, by)]
+                vec![(sx, sy)]
             };
 
             reserved_sites.insert(site_entity);
@@ -287,8 +287,8 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
                 task_kind: TaskKind::Build,
                 building_x: bx,
                 building_y: by,
-                target_x: bx,
-                target_y: by,
+                target_x: sx,
+                target_y: sy,
                 waypoints: path_waypoints,
                 bed_entity: None,
                 site_entity: Some(site_entity),
@@ -344,12 +344,12 @@ fn preempt_build_for_critical_needs(world: &mut World) {
     }
 }
 
-fn release_stuck_build_tasks(world: &mut World) {
-    let stuck: Vec<Entity> = {
+fn release_stuck_tasks(world: &mut World) {
+    let stuck: Vec<(Entity, TaskKind)> = {
         let mut q = world.query::<(Entity, &Position, &Task, &Path)>();
         q.iter(world)
             .filter_map(|(entity, pos, task, path)| {
-                if !matches!(task.kind, TaskKind::Build) {
+                if !matches!(task.kind, TaskKind::Build | TaskKind::Eat | TaskKind::Sleep) {
                     return None;
                 }
                 let (gx, gy) = pos.grid_cell();
@@ -359,34 +359,45 @@ fn release_stuck_build_tasks(world: &mut World) {
                 if path.index < path.waypoints.len() {
                     return None;
                 }
-                Some(entity)
+                Some((entity, task.kind))
             })
             .collect()
     };
 
-    for entity in stuck {
-        release_construction_reservation(world, entity);
+    for (entity, kind) in stuck {
+        if matches!(kind, TaskKind::Build) {
+            release_construction_reservation(world, entity);
+        }
         clear_task(world, entity);
     }
 }
 
-fn nearest_unassigned_site(
+fn nearest_build_assignment(
+    grid: &WorldGrid,
     from: (i32, i32),
     sites: &[(Entity, i32, i32)],
     reserved: &HashSet<Entity>,
-) -> Option<(Entity, i32, i32)> {
-    sites
+) -> Option<(Entity, (i32, i32), (i32, i32))> {
+    let mut candidates: Vec<((Entity, i32, i32), i32)> = sites
         .iter()
         .filter(|(entity, _, _)| !reserved.contains(entity))
-        .min_by_key(|(_, bx, by)| (bx - from.0).abs() + (by - from.1).abs())
-        .map(|(entity, bx, by)| (*entity, *bx, *by))
+        .map(|&(entity, sx, sy)| ((entity, sx, sy), (sx - from.0).abs() + (sy - from.1).abs()))
+        .collect();
+    candidates.sort_by_key(|(_, dist)| *dist);
+
+    for ((entity, sx, sy), _) in candidates {
+        if let Some(stand) = best_adjacent_stand(grid, (sx, sy), from) {
+            return Some((entity, (sx, sy), stand));
+        }
+    }
+    None
 }
 
 fn nearest_eat_assignment(
     grid: &WorldGrid,
     from: (i32, i32),
     bushes: &[(i32, i32)],
-) -> Option<(i32, i32)> {
+) -> Option<((i32, i32), (i32, i32))> {
     let mut candidates: Vec<((i32, i32), i32)> = bushes
         .iter()
         .map(|&(bx, by)| ((bx, by), (bx - from.0).abs() + (by - from.1).abs()))
@@ -394,8 +405,8 @@ fn nearest_eat_assignment(
     candidates.sort_by_key(|(_, dist)| *dist);
 
     for ((bx, by), _) in candidates {
-        if find_path(grid, from, (bx, by)).is_some() {
-            return Some((bx, by));
+        if let Some(stand) = best_adjacent_stand(grid, (bx, by), from) {
+            return Some(((bx, by), stand));
         }
     }
     None
@@ -474,9 +485,10 @@ pub fn task_execution(world: &mut World, grid: &mut WorldGrid) {
     for (colonist_entity, kind, building_x, building_y, gx, gy) in completions {
         match kind {
             TaskKind::Eat => {
-                if gx == building_x
-                    && gy == building_y
-                    && grid.building_at(gx, gy) == Some(BuildingType::BerryBush)
+                let adjacent =
+                    (gx - building_x).abs() + (gy - building_y).abs() == 1;
+                if adjacent
+                    && grid.building_at(building_x, building_y) == Some(BuildingType::BerryBush)
                 {
                     let mut ate = false;
                     let mut depleted = false;
@@ -523,7 +535,6 @@ pub fn task_execution(world: &mut World, grid: &mut WorldGrid) {
             TaskKind::Idle | TaskKind::Build => {}
         }
 
-        release_bed_reservation(world, colonist_entity);
         clear_task(world, colonist_entity);
     }
 
@@ -534,7 +545,7 @@ pub fn task_execution(world: &mut World, grid: &mut WorldGrid) {
 }
 
 fn apply_build_work(world: &mut World, grid: &mut WorldGrid) {
-    let workers: Vec<(Entity, i32, i32)> = {
+    let workers: Vec<(Entity, i32, i32, i32, i32)> = {
         let mut colonists = world.query::<(Entity, &Position, &Task, &Path)>();
         colonists
             .iter(world)
@@ -549,13 +560,18 @@ fn apply_build_work(world: &mut World, grid: &mut WorldGrid) {
                 if gx != task.target_x || gy != task.target_y {
                     return None;
                 }
-                Some((entity, gx, gy))
+                let adjacent =
+                    (gx - task.building_x).abs() + (gy - task.building_y).abs() == 1;
+                if !adjacent {
+                    return None;
+                }
+                Some((entity, gx, gy, task.building_x, task.building_y))
             })
             .collect()
     };
 
-    for (colonist_entity, gx, gy) in workers {
-        let site_entity = construction_site_at(world, gx, gy);
+    for (colonist_entity, _gx, _gy, building_x, building_y) in workers {
+        let site_entity = construction_site_at(world, building_x, building_y);
         let Some(site_entity) = site_entity else {
             release_construction_reservation(world, colonist_entity);
             clear_task(world, colonist_entity);
@@ -573,7 +589,14 @@ fn apply_build_work(world: &mut World, grid: &mut WorldGrid) {
 
         if should_complete {
             if let Some(site) = world.get::<ConstructionSite>(site_entity).copied() {
-                complete_construction(world, grid, site_entity, &site, gx, gy);
+                complete_construction(
+                    world,
+                    grid,
+                    site_entity,
+                    &site,
+                    building_x,
+                    building_y,
+                );
             }
             clear_task(world, colonist_entity);
         }
@@ -600,8 +623,10 @@ fn release_bed_reservation(world: &mut World, colonist: Entity) {
 
 fn clear_task(world: &mut World, colonist: Entity) {
     if let Some(task) = world.get::<Task>(colonist) {
-        if matches!(task.kind, TaskKind::Build) {
-            release_construction_reservation(world, colonist);
+        match task.kind {
+            TaskKind::Build => release_construction_reservation(world, colonist),
+            TaskKind::Sleep => release_bed_reservation(world, colonist),
+            _ => {}
         }
     }
     if let Some(mut task) = world.get_mut::<Task>(colonist) {
@@ -621,4 +646,252 @@ fn building_entity_at(world: &mut World, x: i32, y: i32) -> Option<Entity> {
     q.iter(world)
         .find(|(_, pos, _)| pos.grid_cell() == (x, y))
         .map(|(entity, _, _)| entity)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::components::{Building, TerrainType};
+    use crate::pathfinding::best_adjacent_stand;
+    use crate::world::{WorldGrid, NEED_THRESHOLD, WORLD_SIZE};
+
+    fn grass_grid() -> WorldGrid {
+        let len = (WORLD_SIZE * WORLD_SIZE) as usize;
+        WorldGrid {
+            terrain: vec![TerrainType::Grass; len],
+            buildings: vec![None; len],
+            seed: 0,
+        }
+    }
+
+    #[test]
+    fn eat_task_targets_adjacent_stand_not_bush_tile() {
+        let mut grid = grass_grid();
+        assert!(grid.place_building(10, 10, BuildingType::BerryBush));
+
+        let mut world = World::new();
+        world.spawn((
+            Building,
+            Position {
+                x: 10.0,
+                y: 10.0,
+            },
+            BuildingType::BerryBush,
+            BerrySupply::new(3),
+        ));
+
+        let colonist = world
+            .spawn((
+                Colonist,
+                Position { x: 5.0, y: 10.0 },
+                Needs {
+                    food: NEED_THRESHOLD - 1.0,
+                    sleep: 100.0,
+                },
+                Task::default(),
+                Path::default(),
+            ))
+            .id();
+
+        auto_assign_tasks(&mut world, &grid);
+
+        let task = world.get::<Task>(colonist).unwrap();
+        assert_eq!(task.kind, TaskKind::Eat);
+        assert_eq!((task.building_x, task.building_y), (10, 10));
+        assert_ne!((task.target_x, task.target_y), (10, 10));
+        assert_eq!(
+            (task.target_x - task.building_x).abs() + (task.target_y - task.building_y).abs(),
+            1
+        );
+    }
+
+    #[test]
+    fn eat_execution_requires_adjacency_not_bush_tile() {
+        let mut grid = grass_grid();
+        assert!(grid.place_building(10, 10, BuildingType::BerryBush));
+
+        let mut world = World::new();
+        world.spawn((
+            Building,
+            Position {
+                x: 10.0,
+                y: 10.0,
+            },
+            BuildingType::BerryBush,
+            BerrySupply::new(3),
+        ));
+
+        let colonist = world
+            .spawn((
+                Colonist,
+                Position { x: 10.0, y: 10.0 },
+                Needs {
+                    food: NEED_THRESHOLD - 1.0,
+                    sleep: 100.0,
+                },
+                Task {
+                    kind: TaskKind::Eat,
+                    building_x: 10,
+                    building_y: 10,
+                    target_x: 10,
+                    target_y: 10,
+                },
+                Path::default(),
+            ))
+            .id();
+
+        task_execution(&mut world, &mut grid);
+
+        let needs = world.get::<Needs>(colonist).unwrap();
+        assert!(
+            needs.food < NEED_THRESHOLD,
+            "standing on bush must not eat"
+        );
+    }
+
+    #[test]
+    fn only_one_colonist_reserves_a_bed() {
+        let mut grid = grass_grid();
+        assert!(grid.place_building(12, 12, BuildingType::Bed));
+
+        let mut world = World::new();
+        let bed = world
+            .spawn((
+                Building,
+                Position {
+                    x: 12.0,
+                    y: 12.0,
+                },
+                BuildingType::Bed,
+                BedOccupancy::default(),
+            ))
+            .id();
+
+        let sleepy = |world: &mut World, x: f32, y: f32| {
+            world
+                .spawn((
+                    Colonist,
+                    Position { x, y },
+                    Needs {
+                        food: 100.0,
+                        sleep: NEED_THRESHOLD - 1.0,
+                    },
+                    Task::default(),
+                    Path::default(),
+                ))
+                .id()
+        };
+
+        let c1 = sleepy(&mut world, 5.0, 12.0);
+        let c2 = sleepy(&mut world, 6.0, 12.0);
+
+        auto_assign_tasks(&mut world, &grid);
+
+        let assigned: Vec<_> = [c1, c2]
+            .iter()
+            .filter(|&&e| world.get::<Task>(e).unwrap().kind == TaskKind::Sleep)
+            .copied()
+            .collect();
+        assert_eq!(assigned.len(), 1);
+
+        let occ = world.get::<BedOccupancy>(bed).unwrap();
+        assert_eq!(occ.reserved_by, Some(assigned[0]));
+    }
+
+    #[test]
+    fn bed_reservation_released_when_sleep_path_fails() {
+        let mut grid = grass_grid();
+        assert!(grid.place_building(12, 12, BuildingType::Bed));
+
+        let mut world = World::new();
+        let bed = world
+            .spawn((
+                Building,
+                Position {
+                    x: 12.0,
+                    y: 12.0,
+                },
+                BuildingType::Bed,
+                BedOccupancy::default(),
+            ))
+            .id();
+
+        let colonist = world
+            .spawn((
+                Colonist,
+                Position { x: 5.0, y: 12.0 },
+                Needs {
+                    food: 100.0,
+                    sleep: 100.0,
+                },
+                Task {
+                    kind: TaskKind::Sleep,
+                    building_x: 12,
+                    building_y: 12,
+                    target_x: 12,
+                    target_y: 12,
+                },
+                Path::default(),
+            ))
+            .id();
+
+        if let Some(mut occ) = world.get_mut::<BedOccupancy>(bed) {
+            occ.reserved_by = Some(colonist);
+        }
+
+        auto_assign_tasks(&mut world, &grid);
+
+        let occ = world.get::<BedOccupancy>(bed).unwrap();
+        assert!(occ.reserved_by.is_none());
+        assert_eq!(world.get::<Task>(colonist).unwrap().kind, TaskKind::Idle);
+    }
+
+    #[test]
+    fn build_task_targets_adjacent_stand_not_site_tile() {
+        let grid = grass_grid();
+        let mut world = World::new();
+        world.spawn((
+            ConstructionSite {
+                building_type: BuildingType::Wall,
+                work_remaining: 30.0,
+                reserved_by: None,
+            },
+            Position {
+                x: 10.0,
+                y: 10.0,
+            },
+        ));
+
+        let colonist = world
+            .spawn((
+                Colonist,
+                Position { x: 5.0, y: 10.0 },
+                Needs::new_full(),
+                Task::default(),
+                Path::default(),
+            ))
+            .id();
+
+        auto_assign_tasks(&mut world, &grid);
+
+        let task = world.get::<Task>(colonist).unwrap();
+        assert_eq!(task.kind, TaskKind::Build);
+        assert_eq!((task.building_x, task.building_y), (10, 10));
+        assert_ne!((task.target_x, task.target_y), (10, 10));
+        assert_eq!(
+            (task.target_x - task.building_x).abs() + (task.target_y - task.building_y).abs(),
+            1
+        );
+    }
+
+    #[test]
+    fn best_adjacent_stand_skips_unwalkable_neighbors() {
+        let mut grid = grass_grid();
+        grid.terrain[WorldGrid::index(5, 4).unwrap()] = TerrainType::Water;
+        grid.terrain[WorldGrid::index(5, 6).unwrap()] = TerrainType::Water;
+        grid.terrain[WorldGrid::index(4, 5).unwrap()] = TerrainType::Water;
+
+        let stand = best_adjacent_stand(&grid, (5, 5), (0, 5)).unwrap();
+        assert_eq!(stand, (6, 5));
+    }
 }
