@@ -26,6 +26,8 @@ pub struct BuildingSnapshot {
     pub x: i32,
     pub y: i32,
     pub building: BuildingType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub berries: Option<u8>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

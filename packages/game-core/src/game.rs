@@ -2,14 +2,14 @@ use bevy_ecs::prelude::*;
 use serde_json;
 use wasm_bindgen::prelude::*;
 
-use crate::components::{BuildingType, ColonistId, Needs, Position, Task};
+use crate::components::{BerrySupply, BuildingType, ColonistId, Needs, Position, Task};
 use crate::events::{
     BuildingSnapshot, ColonistSnapshot, IncomingEvent, OutgoingEvent, StateSnapshot, TileSnapshot,
 };
 use crate::systems::{
     auto_assign_tasks, colonist_movement, needs_decay, spawn_colonists, task_execution,
 };
-use crate::world::{generate_world, WorldGrid, WORLD_SIZE};
+use crate::world::{generate_world, WorldGrid, BERRIES_PER_BUSH, WORLD_SIZE};
 
 #[wasm_bindgen]
 pub struct Game {
@@ -57,7 +57,7 @@ impl Game {
         needs_decay(&mut self.world, scaled_dt);
         auto_assign_tasks(&mut self.world, &self.grid);
         colonist_movement(&mut self.world, scaled_dt);
-        task_execution(&mut self.world, &self.grid);
+        task_execution(&mut self.world, &mut self.grid);
 
         self.snapshot_json()
     }
@@ -76,14 +76,24 @@ impl Game {
             }
             IncomingEvent::Build { building, x, y } => {
                 if self.grid.place_building(x, y, building) {
-                    let _ = self.world.spawn((
-                        crate::components::Building,
-                        Position {
-                            x: x as f32,
-                            y: y as f32,
-                        },
-                        building,
-                    ));
+                    let position = Position {
+                        x: x as f32,
+                        y: y as f32,
+                    };
+                    if building == BuildingType::BerryBush {
+                        self.world.spawn((
+                            crate::components::Building,
+                            position,
+                            building,
+                            BerrySupply::new(BERRIES_PER_BUSH),
+                        ));
+                    } else {
+                        self.world.spawn((
+                            crate::components::Building,
+                            position,
+                            building,
+                        ));
+                    }
                 }
             }
         }
@@ -107,12 +117,13 @@ impl Game {
 
         let buildings: Vec<BuildingSnapshot> = self
             .world
-            .query::<(&Position, &BuildingType)>()
+            .query::<(&Position, &BuildingType, Option<&BerrySupply>)>()
             .iter(&self.world)
-            .map(|(pos, bt)| BuildingSnapshot {
+            .map(|(pos, bt, supply)| BuildingSnapshot {
                 x: pos.x as i32,
                 y: pos.y as i32,
                 building: *bt,
+                berries: supply.map(|s| s.remaining),
             })
             .collect();
 

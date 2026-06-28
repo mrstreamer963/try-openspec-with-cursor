@@ -12,6 +12,7 @@ export interface BuildingSnapshot {
   x: number;
   y: number;
   building: BuildingType;
+  berries?: number;
 }
 
 export interface ColonistSnapshot {

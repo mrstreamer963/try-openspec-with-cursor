@@ -116,6 +116,17 @@ pub struct Colonist;
 #[derive(Component)]
 pub struct Building;
 
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct BerrySupply {
+    pub remaining: u8,
+}
+
+impl BerrySupply {
+    pub fn new(remaining: u8) -> Self {
+        Self { remaining }
+    }
+}
+
 #[derive(Component, Clone, Debug, Default)]
 pub struct Path {
     pub waypoints: Vec<(i32, i32)>,

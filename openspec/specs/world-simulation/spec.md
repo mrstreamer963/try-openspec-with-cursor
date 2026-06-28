@@ -40,8 +40,12 @@ The simulation SHALL support placing three building types: Bed, BerryBush, and W
 - **THEN** the build is rejected and no building entity is created
 
 #### Scenario: Berry bush provides food
-- **WHEN** a colonist interacts with a BerryBush building
-- **THEN** the colonist's Food need increases
+- **WHEN** a colonist interacts with a BerryBush building that has berries remaining
+- **THEN** the colonist's Food need increases and the bush loses one berry
+
+#### Scenario: Depleted berry bush removed
+- **WHEN** a BerryBush's last berry is consumed
+- **THEN** the building is removed from the world grid and no longer appears in snapshots
 
 #### Scenario: Bed satisfies sleep
 - **WHEN** a colonist interacts with a Bed building
@@ -53,3 +57,10 @@ Building placement SHALL NOT require any resource cost in v1.
 #### Scenario: Unlimited building
 - **WHEN** the player places multiple beds in succession
 - **THEN** each placement succeeds without checking or deducting resources
+
+### Requirement: Finite berry supply
+Each newly placed BerryBush SHALL start with a fixed number of berry portions (3).
+
+#### Scenario: New bush berry count
+- **WHEN** a BerryBush is placed
+- **THEN** it has exactly 3 berries available

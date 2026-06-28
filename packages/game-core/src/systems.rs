@@ -1,6 +1,9 @@
 use bevy_ecs::prelude::*;
 
-use crate::components::{BuildingType, Colonist, ColonistId, NeedKind, Needs, Path, Position, Task, TaskKind};
+use crate::components::{
+    BerrySupply, BuildingType, Colonist, ColonistId, NeedKind, Needs, Path, Position, Task,
+    TaskKind,
+};
 use crate::pathfinding::find_path;
 use crate::world::{
     WorldGrid, FOOD_DECAY_PER_SEC, MOVE_SPEED, NEED_RESTORE, NEED_THRESHOLD, SLEEP_DECAY_PER_SEC,
@@ -50,11 +53,19 @@ pub fn needs_decay(world: &mut World, dt: f32) {
 
 pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
     let buildings: Vec<(i32, i32, BuildingType)> = {
-        let mut q = world.query::<(&Position, &BuildingType)>();
+        let mut q = world.query::<(&Position, &BuildingType, Option<&BerrySupply>)>();
         q.iter(world)
-            .map(|(pos, bt)| {
+            .filter_map(|(pos, bt, supply)| {
                 let (gx, gy) = pos.grid_cell();
-                (gx, gy, *bt)
+                let available = match bt {
+                    BuildingType::BerryBush => supply.map(|s| s.remaining > 0).unwrap_or(false),
+                    _ => true,
+                };
+                if available {
+                    Some((gx, gy, *bt))
+                } else {
+                    None
+                }
             })
             .collect()
     };
@@ -153,44 +164,87 @@ pub fn colonist_movement(world: &mut World, dt: f32) {
     }
 }
 
-pub fn task_execution(world: &mut World, grid: &WorldGrid) {
-    let mut colonists = world.query::<(
-        &Position,
-        &mut Needs,
-        &mut Task,
-        &mut Path,
-    )>();
+pub fn task_execution(world: &mut World, grid: &mut WorldGrid) {
+    let completions: Vec<(Entity, TaskKind, i32, i32)> = {
+        let mut colonists = world.query::<(Entity, &Position, &Task, &Path)>();
+        colonists
+            .iter(world)
+            .filter_map(|(entity, pos, task, path)| {
+                if matches!(task.kind, TaskKind::Idle) {
+                    return None;
+                }
+                if path.index < path.waypoints.len() {
+                    return None;
+                }
+                let (gx, gy) = pos.grid_cell();
+                if gx != task.target_x || gy != task.target_y {
+                    return None;
+                }
+                Some((entity, task.kind, gx, gy))
+            })
+            .collect()
+    };
 
-    for (pos, mut needs, mut task, mut path) in colonists.iter_mut(world) {
-        if matches!(task.kind, TaskKind::Idle) {
-            continue;
-        }
-        if path.index < path.waypoints.len() {
-            continue;
-        }
-        let (gx, gy) = pos.grid_cell();
-        if gx != task.target_x || gy != task.target_y {
-            continue;
-        }
+    let mut to_despawn: Vec<(Entity, i32, i32)> = Vec::new();
 
-        let building = grid.building_at(gx, gy);
-        let satisfied = match task.kind {
-            TaskKind::Eat => building == Some(BuildingType::BerryBush),
-            TaskKind::Sleep => building == Some(BuildingType::Bed),
-            TaskKind::Idle => false,
-        };
+    for (colonist_entity, kind, gx, gy) in completions {
+        match kind {
+            TaskKind::Eat => {
+                let mut ate = false;
+                let mut depleted = false;
+                let mut building_entity = None;
 
-        if satisfied {
-            match task.kind {
-                TaskKind::Eat => needs.set(NeedKind::Food, NEED_RESTORE),
-                TaskKind::Sleep => needs.set(NeedKind::Sleep, NEED_RESTORE),
-                TaskKind::Idle => {}
+                if let Some(be) = building_entity_at(world, gx, gy) {
+                    if let Some(mut supply) = world.get_mut::<BerrySupply>(be) {
+                        if supply.remaining > 0 {
+                            supply.remaining -= 1;
+                            ate = true;
+                            depleted = supply.remaining == 0;
+                            building_entity = Some(be);
+                        }
+                    }
+                }
+
+                if ate {
+                    if let Some(mut needs) = world.get_mut::<Needs>(colonist_entity) {
+                        needs.set(NeedKind::Food, NEED_RESTORE);
+                    }
+                    if depleted {
+                        if let Some(be) = building_entity {
+                            to_despawn.push((be, gx, gy));
+                        }
+                    }
+                }
             }
+            TaskKind::Sleep => {
+                if grid.building_at(gx, gy) == Some(BuildingType::Bed) {
+                    if let Some(mut needs) = world.get_mut::<Needs>(colonist_entity) {
+                        needs.set(NeedKind::Sleep, NEED_RESTORE);
+                    }
+                }
+            }
+            TaskKind::Idle => {}
         }
 
-        task.kind = TaskKind::Idle;
-        task.target_x = 0;
-        task.target_y = 0;
-        path.clear();
+        if let Some(mut task) = world.get_mut::<Task>(colonist_entity) {
+            task.kind = TaskKind::Idle;
+            task.target_x = 0;
+            task.target_y = 0;
+        }
+        if let Some(mut path) = world.get_mut::<Path>(colonist_entity) {
+            path.clear();
+        }
     }
+
+    for (entity, gx, gy) in to_despawn {
+        grid.remove_building(gx, gy);
+        let _ = world.despawn(entity);
+    }
+}
+
+fn building_entity_at(world: &mut World, x: i32, y: i32) -> Option<Entity> {
+    let mut q = world.query::<(Entity, &Position, &BuildingType)>();
+    q.iter(world)
+        .find(|(_, pos, _)| pos.grid_cell() == (x, y))
+        .map(|(entity, _, _)| entity)
 }

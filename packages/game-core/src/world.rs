@@ -37,6 +37,16 @@ impl WorldGrid {
         }
     }
 
+    pub fn remove_building(&mut self, x: i32, y: i32) -> bool {
+        if let Some(i) = Self::index(x, y) {
+            if self.buildings[i].is_some() {
+                self.buildings[i] = None;
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn place_building(&mut self, x: i32, y: i32, building: BuildingType) -> bool {
         if !self.is_walkable(x, y) {
             return false;
@@ -93,6 +103,7 @@ fn hash_noise(x: i32, y: i32, seed: u32) -> f32 {
     (n & 0xFFFF) as f32 / 65535.0
 }
 
+pub const BERRIES_PER_BUSH: u8 = 3;
 pub const NEED_THRESHOLD: f32 = 30.0;
 pub const NEED_RESTORE: f32 = 100.0;
 pub const FOOD_DECAY_PER_SEC: f32 = 2.0;

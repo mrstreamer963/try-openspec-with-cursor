@@ -257,7 +257,12 @@ export class PixiRenderer {
         TILE_SIZE - pad * 2,
         TILE_SIZE - pad * 2,
       );
-      g.fill(BUILDING_COLORS[b.building]);
+      let color = BUILDING_COLORS[b.building];
+      let alpha = 1;
+      if (b.building === 'BerryBush' && b.berries != null) {
+        alpha = 0.45 + (b.berries / 3) * 0.55;
+      }
+      g.fill({ color, alpha });
       this.buildingsLayer.addChild(g);
     }
   }
