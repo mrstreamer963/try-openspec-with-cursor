@@ -33,6 +33,7 @@ pub struct BuildingSnapshot {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ColonistSnapshot {
     pub id: u32,
+    pub name: String,
     pub x: f32,
     pub y: f32,
     pub food: f32,

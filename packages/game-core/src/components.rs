@@ -115,6 +115,13 @@ impl Default for Task {
 #[derive(Component, Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ColonistId(pub u32);
 
+pub const COLONIST_NAME_POOL: &[&str] = &[
+    "Alex", "Mira", "Finn", "Luna", "Kai", "Nora", "Eli", "Zoe", "Sam", "Ivy", "Leo", "Noa",
+];
+
+#[derive(Component, Clone, Debug)]
+pub struct ColonistName(pub String);
+
 #[derive(Component)]
 pub struct Colonist;
 

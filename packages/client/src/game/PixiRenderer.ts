@@ -1,4 +1,4 @@
-import { Application, Container, Graphics } from 'pixi.js';
+import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
 import type { ColonistSnapshot, StateSnapshot } from './types';
 import {
   BUILDING_COLORS,
@@ -39,6 +39,14 @@ export interface ColonistClickTarget {
 
 export type SceneClick = ClickTarget | ColonistClickTarget;
 
+const COLONIST_LABEL_STYLE = new TextStyle({
+  fill: 0xffffff,
+  fontSize: 10,
+  fontFamily: 'system-ui, sans-serif',
+  stroke: { color: 0x1a202c, width: 2 },
+  align: 'center',
+});
+
 export class PixiRenderer {
   readonly app: Application;
   readonly worldContainer: Container;
@@ -53,6 +61,7 @@ export class PixiRenderer {
   private cameraStart = { offsetX: 0, offsetY: 0 };
   private onSceneClick?: (click: SceneClick) => void;
   private colonistGraphics = new Map<number, Graphics>();
+  private colonistLabels = new Map<number, Text>();
   private colonistMotion = new Map<number, ColonistMotion>();
   private pointerDownHandler?: (e: PointerEvent) => void;
   private pointerUpHandler?: (e: PointerEvent) => void;
@@ -349,12 +358,31 @@ export class PixiRenderer {
       const cy = motion.visualY * TILE_SIZE + TILE_SIZE / 2;
       g.circle(cx, cy, TILE_SIZE * 0.35);
       g.fill(COLONIST_COLOR);
+
+      let label = this.colonistLabels.get(c.id);
+      if (!label) {
+        label = new Text({ text: c.name, style: COLONIST_LABEL_STYLE });
+        label.anchor.set(0.5, 1);
+        this.colonistLabels.set(c.id, label);
+        this.entitiesLayer.addChild(label);
+      } else if (label.text !== c.name) {
+        label.text = c.name;
+      }
+      label.x = cx;
+      label.y = cy - TILE_SIZE * 0.35 - 2;
     }
 
     for (const [id, g] of this.colonistGraphics) {
       if (!seen.has(id)) {
         this.entitiesLayer.removeChild(g);
         this.colonistGraphics.delete(id);
+      }
+    }
+
+    for (const [id, label] of this.colonistLabels) {
+      if (!seen.has(id)) {
+        this.entitiesLayer.removeChild(label);
+        this.colonistLabels.delete(id);
       }
     }
   }

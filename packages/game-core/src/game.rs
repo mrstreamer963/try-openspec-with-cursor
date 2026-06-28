@@ -2,7 +2,9 @@ use bevy_ecs::prelude::*;
 use serde_json;
 use wasm_bindgen::prelude::*;
 
-use crate::components::{BedOccupancy, BerrySupply, BuildingType, ColonistId, Needs, Position, Task};
+use crate::components::{
+    BedOccupancy, BerrySupply, BuildingType, ColonistId, ColonistName, Needs, Position, Task,
+};
 use crate::events::{
     BuildingSnapshot, ColonistSnapshot, IncomingEvent, OutgoingEvent, StateSnapshot, TileSnapshot,
 };
@@ -141,10 +143,11 @@ impl Game {
 
         let colonists: Vec<ColonistSnapshot> = self
             .world
-            .query::<(&ColonistId, &Position, &Needs, &Task)>()
+            .query::<(&ColonistId, &ColonistName, &Position, &Needs, &Task)>()
             .iter(&self.world)
-            .map(|(id, pos, needs, task)| ColonistSnapshot {
+            .map(|(id, name, pos, needs, task)| ColonistSnapshot {
                 id: id.0,
+                name: name.0.clone(),
                 x: pos.x,
                 y: pos.y,
                 food: needs.food,

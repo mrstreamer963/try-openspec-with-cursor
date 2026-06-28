@@ -8,7 +8,7 @@ defineProps<{
 
 <template>
   <div v-if="colonist" class="panel">
-    <h3>Colonist #{{ colonist.id }}</h3>
+    <h3>{{ colonist.name }} (#{{ colonist.id }})</h3>
     <dl>
       <dt>Position</dt>
       <dd>{{ Math.floor(colonist.x) }}, {{ Math.floor(colonist.y) }}</dd>

@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use bevy_ecs::prelude::*;
 
 use crate::components::{
-    BedOccupancy, BerrySupply, BuildingType, Colonist, ColonistId, NeedKind, Needs, Path, Position,
-    Task, TaskKind,
+    BedOccupancy, BerrySupply, BuildingType, Colonist, ColonistId, ColonistName,
+    COLONIST_NAME_POOL, NeedKind, Needs, Path, Position, Task, TaskKind,
 };
 use crate::pathfinding::find_path;
 use crate::world::{
@@ -12,10 +12,33 @@ use crate::world::{
     WORLD_SIZE,
 };
 
+fn shuffled_indices(len: usize, count: usize) -> Vec<usize> {
+    let mut indices: Vec<usize> = (0..len).collect();
+    for i in 0..len {
+        let range = len - i;
+        let j = i + random_usize(range);
+        indices.swap(i, j);
+    }
+    indices.truncate(count);
+    indices
+}
+
+fn random_usize(upper: usize) -> usize {
+    if upper <= 1 {
+        return 0;
+    }
+    let mut buf = [0u8; 8];
+    getrandom::fill(&mut buf).expect("failed to get random bytes");
+    (u64::from_le_bytes(buf) % upper as u64) as usize
+}
+
 pub fn spawn_colonists(world: &mut World, grid: &WorldGrid) -> u32 {
     let mut next_id = 1u32;
     let mut spawned = 0;
     let center = WORLD_SIZE / 2;
+    let mut names = shuffled_indices(COLONIST_NAME_POOL.len(), 3)
+        .into_iter()
+        .map(|i| COLONIST_NAME_POOL[i].to_string());
 
     for y in (center - 10)..=(center + 10) {
         for x in (center - 10)..=(center + 10) {
@@ -25,18 +48,19 @@ pub fn spawn_colonists(world: &mut World, grid: &WorldGrid) -> u32 {
             if grid.terrain_at(x, y) == Some(crate::components::TerrainType::Grass)
                 && grid.is_walkable(x, y)
             {
-                let _ = world
-                    .spawn((
-                        Colonist,
-                        ColonistId(next_id),
-                        Position {
-                            x: x as f32,
-                            y: y as f32,
-                        },
-                        Needs::new_full(),
-                        Task::default(),
-                        Path::default(),
-                    ));
+                let name = names.next().expect("name pool exhausted");
+                let _ = world.spawn((
+                    Colonist,
+                    ColonistId(next_id),
+                    ColonistName(name),
+                    Position {
+                        x: x as f32,
+                        y: y as f32,
+                    },
+                    Needs::new_full(),
+                    Task::default(),
+                    Path::default(),
+                ));
                 next_id += 1;
                 spawned += 1;
             }

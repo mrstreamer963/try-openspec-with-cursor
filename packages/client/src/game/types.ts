@@ -17,6 +17,7 @@ export interface BuildingSnapshot {
 
 export interface ColonistSnapshot {
   id: number;
+  name: string;
   x: number;
   y: number;
   food: number;
