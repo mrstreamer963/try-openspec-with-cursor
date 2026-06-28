@@ -2,6 +2,7 @@
 defineProps<{
   paused: boolean;
   speed: number;
+  speedPresets: readonly number[];
 }>();
 
 const emit = defineEmits<{
@@ -18,7 +19,7 @@ const emit = defineEmits<{
     <div class="speed-group">
       <span class="label">Speed</span>
       <button
-        v-for="s in [1, 2, 3]"
+        v-for="s in speedPresets"
         :key="s"
         class="btn"
         :class="{ active: speed === s }"

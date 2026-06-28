@@ -6,7 +6,7 @@ use crate::components::{
     BedOccupancy, BerrySupply, BuildingType, Colonist, ColonistId, NeedKind, Needs, Path, Position,
     Task, TaskKind,
 };
-use crate::pathfinding::{best_adjacent_stand, find_path};
+use crate::pathfinding::find_path;
 use crate::world::{
     WorldGrid, FOOD_DECAY_PER_SEC, MOVE_SPEED, NEED_RESTORE, NEED_THRESHOLD, SLEEP_DECAY_PER_SEC,
     WORLD_SIZE,
@@ -121,7 +121,7 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
 
         let assignment = match need_kind {
             NeedKind::Food => nearest_eat_assignment(grid, (gx, gy), &berry_bushes).map(
-                |((bx, by), (tx, ty))| (TaskKind::Eat, bx, by, tx, ty, None),
+                |(bx, by)| (TaskKind::Eat, bx, by, bx, by, None),
             ),
             NeedKind::Sleep => nearest_free_bed((gx, gy), &free_beds, &reserved_beds).map(
                 |(bed_entity, bx, by)| (TaskKind::Sleep, bx, by, bx, by, Some(bed_entity)),
@@ -182,7 +182,7 @@ fn nearest_eat_assignment(
     grid: &WorldGrid,
     from: (i32, i32),
     bushes: &[(i32, i32)],
-) -> Option<((i32, i32), (i32, i32))> {
+) -> Option<(i32, i32)> {
     let mut candidates: Vec<((i32, i32), i32)> = bushes
         .iter()
         .map(|&(bx, by)| ((bx, by), (bx - from.0).abs() + (by - from.1).abs()))
@@ -190,8 +190,8 @@ fn nearest_eat_assignment(
     candidates.sort_by_key(|(_, dist)| *dist);
 
     for ((bx, by), _) in candidates {
-        if let Some(stand) = best_adjacent_stand(grid, (bx, by), from) {
-            return Some(((bx, by), stand));
+        if find_path(grid, from, (bx, by)).is_some() {
+            return Some((bx, by));
         }
     }
     None
@@ -268,9 +268,10 @@ pub fn task_execution(world: &mut World, grid: &mut WorldGrid) {
     for (colonist_entity, kind, building_x, building_y, gx, gy) in completions {
         match kind {
             TaskKind::Eat => {
-                let adjacent = (gx - building_x).abs() + (gy - building_y).abs() == 1;
-
-                if adjacent {
+                if gx == building_x
+                    && gy == building_y
+                    && grid.building_at(gx, gy) == Some(BuildingType::BerryBush)
+                {
                     let mut ate = false;
                     let mut depleted = false;
                     let mut building_entity = None;

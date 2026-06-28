@@ -51,8 +51,12 @@ The build pipeline SHALL use `vite-plugin-wasm` to load the compiled WASM module
 - **THEN** the output includes the WASM binary and the worker entry point loads it correctly
 
 ### Requirement: Speed multiplier
-The worker bridge SHALL apply a speed multiplier to the delta time passed to `tick()`, supporting 1×, 2×, and 3× speeds.
+The worker bridge SHALL apply a speed multiplier to the delta time passed to `tick()`, supporting 1×, 5×, and 10× speeds.
 
-#### Scenario: Double speed
-- **WHEN** speed is set to 2×
-- **THEN** each tick call passes `dt = 0.10` instead of `0.05`
+#### Scenario: Five times speed
+- **WHEN** speed is set to 5×
+- **THEN** each tick call passes `dt = 0.25` instead of `0.05`
+
+#### Scenario: Ten times speed
+- **WHEN** speed is set to 10×
+- **THEN** each tick call passes `dt = 0.50` instead of `0.05`

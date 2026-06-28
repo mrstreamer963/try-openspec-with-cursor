@@ -7,6 +7,7 @@ import ColonistInfo from './components/ColonistInfo.vue';
 import { GameManager } from './game/GameManager';
 import { PixiRenderer } from './game/PixiRenderer';
 import type { BuildMode, ColonistSnapshot, StateSnapshot } from './game/types';
+import { SPEED_PRESETS } from './speedPresets';
 
 const canvasMount = ref<HTMLElement | null>(null);
 const loading = ref(true);
@@ -19,7 +20,28 @@ const latestSnapshot = shallowRef<StateSnapshot | null>(null);
 let gameManager: GameManager | null = null;
 let renderer: PixiRenderer | null = null;
 
+function onKeyDown(event: KeyboardEvent): void {
+  if (loading.value) return;
+
+  if (event.code === 'Space') {
+    event.preventDefault();
+    togglePause();
+    return;
+  }
+
+  const speedByKey: Record<string, number> = {
+    '1': SPEED_PRESETS[0],
+    '2': SPEED_PRESETS[1],
+    '3': SPEED_PRESETS[2],
+  };
+  const preset = speedByKey[event.key];
+  if (preset !== undefined) {
+    setSpeed(preset);
+  }
+}
+
 onMounted(async () => {
+  window.addEventListener('keydown', onKeyDown);
   if (!canvasMount.value) return;
 
   gameManager = new GameManager();
@@ -71,6 +93,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener('keydown', onKeyDown);
   gameManager?.destroy();
   renderer?.destroy();
 });
@@ -88,7 +111,13 @@ function setSpeed(s: number): void {
 <template>
   <LoadingScreen :visible="loading" />
   <div ref="canvasMount" class="canvas-host" />
-  <Hud :paused="paused" :speed="speed" @toggle-pause="togglePause" @set-speed="setSpeed" />
+  <Hud
+    :paused="paused"
+    :speed="speed"
+    :speed-presets="SPEED_PRESETS"
+    @toggle-pause="togglePause"
+    @set-speed="setSpeed"
+  />
   <Toolbar :build-mode="buildMode" @select-mode="(m) => (buildMode = m)" />
   <ColonistInfo :colonist="selectedColonist" />
 </template>
