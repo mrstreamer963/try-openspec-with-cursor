@@ -12,15 +12,17 @@ defineProps<{
     <dl>
       <dt>Position</dt>
       <dd>{{ Math.floor(colonist.x) }}, {{ Math.floor(colonist.y) }}</dd>
-      <dt>Food</dt>
-      <dd>
+      <dt :class="{ critical: colonist.hungry }">Food</dt>
+      <dd :class="{ critical: colonist.hungry }">
         <div class="bar"><div class="fill food" :style="{ width: colonist.food + '%' }" /></div>
         {{ Math.round(colonist.food) }}
+        <span v-if="colonist.hungry" class="status hungry">Hungry</span>
       </dd>
-      <dt>Sleep</dt>
-      <dd>
+      <dt :class="{ critical: colonist.wants_sleep }">Sleep</dt>
+      <dd :class="{ critical: colonist.wants_sleep }">
         <div class="bar"><div class="fill sleep" :style="{ width: colonist.sleep + '%' }" /></div>
         {{ Math.round(colonist.sleep) }}
+        <span v-if="colonist.wants_sleep" class="status sleep">Wants sleep</span>
       </dd>
       <dt>Task</dt>
       <dd>{{ colonist.task }}</dd>
@@ -54,7 +56,25 @@ dl {
   gap: 6px 12px;
 }
 dt { color: #a0aec0; }
+dt.critical { color: #fc8181; font-weight: 600; }
 dd { margin: 0; }
+dd.critical { color: #fed7d7; }
+.status {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.status.hungry {
+  color: #fed7d7;
+  background: rgba(229, 62, 62, 0.25);
+}
+.status.sleep {
+  color: #e9d8fd;
+  background: rgba(159, 122, 234, 0.25);
+}
 .bar {
   height: 6px;
   background: #2d3748;

@@ -3,8 +3,8 @@ use serde_json;
 use wasm_bindgen::prelude::*;
 
 use crate::components::{
-    BerrySupply, BuildingType, ColonistId, ColonistName, ConstructionSite, Needs, Position, Task,
-    work_required_for,
+    BerrySupply, BuildingType, ColonistId, ColonistName, ConstructionSite, Hungry, Needs,
+    Position, Task, WantsSleep, work_required_for,
 };
 use crate::events::{
     BuildingSnapshot, ColonistSnapshot, ConstructionSiteSnapshot, IncomingEvent, OutgoingEvent,
@@ -134,15 +134,25 @@ impl Game {
 
         let colonists: Vec<ColonistSnapshot> = self
             .world
-            .query::<(&ColonistId, &ColonistName, &Position, &Needs, &Task)>()
+            .query::<(
+                &ColonistId,
+                &ColonistName,
+                &Position,
+                &Needs,
+                &Task,
+                Option<&Hungry>,
+                Option<&WantsSleep>,
+            )>()
             .iter(&self.world)
-            .map(|(id, name, pos, needs, task)| ColonistSnapshot {
+            .map(|(id, name, pos, needs, task, hungry, wants_sleep)| ColonistSnapshot {
                 id: id.0,
                 name: name.0.clone(),
                 x: pos.x,
                 y: pos.y,
                 food: needs.food,
                 sleep: needs.sleep,
+                hungry: hungry.is_some(),
+                wants_sleep: wants_sleep.is_some(),
                 task: task.kind,
             })
             .collect();
@@ -186,5 +196,76 @@ impl Game {
 
     pub fn is_paused(&self) -> bool {
         self.paused
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::components::Needs;
+    use crate::systems::update_need_buffs;
+    use crate::world::NEED_THRESHOLD;
+
+    #[test]
+    fn snapshot_flags_match_need_buffs_below_threshold() {
+        let mut game = Game::new();
+
+        {
+            let mut q = game.world.query::<&mut Needs>();
+            for mut needs in q.iter_mut(&mut game.world) {
+                needs.food = NEED_THRESHOLD - 1.0;
+                needs.sleep = NEED_THRESHOLD - 1.0;
+            }
+        }
+
+        update_need_buffs(&mut game.world);
+
+        let json = game.get_snapshot();
+        let event: OutgoingEvent = serde_json::from_str(&json).unwrap();
+        let OutgoingEvent::StateSnapshot(snapshot) = event else {
+            panic!("expected state snapshot");
+        };
+
+        for colonist in &snapshot.colonists {
+            assert!(colonist.hungry, "colonist {} should be hungry", colonist.id);
+            assert!(
+                colonist.wants_sleep,
+                "colonist {} should want sleep",
+                colonist.id
+            );
+        }
+
+        assert!(json.contains("\"hungry\":true"));
+        assert!(json.contains("\"wants_sleep\":true"));
+    }
+
+    #[test]
+    fn snapshot_flags_false_when_needs_satisfied() {
+        let mut game = Game::new();
+
+        {
+            let mut q = game.world.query::<&mut Needs>();
+            for mut needs in q.iter_mut(&mut game.world) {
+                needs.food = NEED_THRESHOLD;
+                needs.sleep = NEED_THRESHOLD;
+            }
+        }
+
+        update_need_buffs(&mut game.world);
+
+        let json = game.get_snapshot();
+        let event: OutgoingEvent = serde_json::from_str(&json).unwrap();
+        let OutgoingEvent::StateSnapshot(snapshot) = event else {
+            panic!("expected state snapshot");
+        };
+
+        for colonist in &snapshot.colonists {
+            assert!(!colonist.hungry, "colonist {} should not be hungry", colonist.id);
+            assert!(
+                !colonist.wants_sleep,
+                "colonist {} should not want sleep",
+                colonist.id
+            );
+        }
     }
 }

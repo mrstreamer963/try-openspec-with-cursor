@@ -38,6 +38,8 @@ pub struct ColonistSnapshot {
     pub y: f32,
     pub food: f32,
     pub sleep: f32,
+    pub hungry: bool,
+    pub wants_sleep: bool,
     pub task: TaskKind,
 }
 

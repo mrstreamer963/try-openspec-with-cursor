@@ -29,6 +29,8 @@ export interface ColonistSnapshot {
   y: number;
   food: number;
   sleep: number;
+  hungry: boolean;
+  wants_sleep: boolean;
   task: TaskKind;
 }
 

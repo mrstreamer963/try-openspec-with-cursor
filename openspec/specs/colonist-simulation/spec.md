@@ -35,6 +35,10 @@ Each colonist SHALL have two needs: Food and Sleep, each represented as a value 
 - **WHEN** a colonist's Food or Sleep value drops below a defined threshold (e.g., 30)
 - **THEN** the colonist is flagged as needing that resource
 
+#### Scenario: Need status in snapshot
+- **WHEN** a state snapshot is built
+- **THEN** each colonist entry includes `hungry: true` when Food is below the critical threshold and `wants_sleep: true` when Sleep is below the critical threshold; otherwise the corresponding flag is `false`
+
 ### Requirement: Float world position
 Each colonist SHALL have a world position expressed as floating-point coordinates in tile units, where integer values align to tile centers (e.g. cell `(5, 7)` is world position `(5.0, 7.0)`).
 
