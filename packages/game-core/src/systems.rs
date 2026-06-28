@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use bevy_ecs::prelude::*;
 
@@ -31,6 +31,34 @@ fn random_usize(upper: usize) -> usize {
     let mut buf = [0u8; 8];
     getrandom::fill(&mut buf).expect("failed to get random bytes");
     (u64::from_le_bytes(buf) % upper as u64) as usize
+}
+
+fn colonist_occupancy_map(world: &mut World) -> HashMap<(i32, i32), Entity> {
+    let mut map = HashMap::new();
+    let mut q = world.query::<(Entity, &Position, &Colonist)>();
+    for (entity, pos, _) in q.iter(world) {
+        map.insert(pos.grid_cell(), entity);
+    }
+    map
+}
+
+fn is_cell_free(
+    map: &HashMap<(i32, i32), Entity>,
+    cell: (i32, i32),
+    self_entity: Entity,
+) -> bool {
+    match map.get(&cell) {
+        None => true,
+        Some(&occupant) => occupant == self_entity,
+    }
+}
+
+fn stand_available_for_eat(
+    stand: (i32, i32),
+    occupancy: &HashMap<(i32, i32), Entity>,
+    reserved_stands: &HashSet<(i32, i32)>,
+) -> bool {
+    !reserved_stands.contains(&stand) && !occupancy.contains_key(&stand)
 }
 
 pub fn spawn_colonists(world: &mut World, grid: &WorldGrid) -> u32 {
@@ -200,6 +228,8 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
 
     let mut reserved_beds: HashSet<Entity> = HashSet::new();
     let mut reserved_sites: HashSet<Entity> = HashSet::new();
+    let mut reserved_stands: HashSet<(i32, i32)> = HashSet::new();
+    let occupancy = colonist_occupancy_map(world);
     let mut pending: Vec<PendingAssignment> = Vec::new();
 
     let mut colonists = world.query::<(Entity, &Position, &Needs, &Task)>();
@@ -220,7 +250,13 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
 
         if let Some(need_kind) = need {
             let assignment = match need_kind {
-                NeedKind::Food => nearest_eat_assignment(grid, (gx, gy), &berry_bushes)
+                NeedKind::Food => nearest_eat_assignment(
+                    grid,
+                    (gx, gy),
+                    &berry_bushes,
+                    &occupancy,
+                    &reserved_stands,
+                )
                     .map(|((bx, by), (sx, sy))| PendingAssignment {
                         entity,
                         task_kind: TaskKind::Eat,
@@ -260,6 +296,9 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
 
                 if let Some(bed_entity) = assignment.bed_entity {
                     reserved_beds.insert(bed_entity);
+                }
+                if assignment.task_kind == TaskKind::Eat {
+                    reserved_stands.insert((assignment.target_x, assignment.target_y));
                 }
 
                 pending.push(assignment);
@@ -397,6 +436,8 @@ fn nearest_eat_assignment(
     grid: &WorldGrid,
     from: (i32, i32),
     bushes: &[(i32, i32)],
+    occupancy: &HashMap<(i32, i32), Entity>,
+    reserved_stands: &HashSet<(i32, i32)>,
 ) -> Option<((i32, i32), (i32, i32))> {
     let mut candidates: Vec<((i32, i32), i32)> = bushes
         .iter()
@@ -405,7 +446,12 @@ fn nearest_eat_assignment(
     candidates.sort_by_key(|(_, dist)| *dist);
 
     for ((bx, by), _) in candidates {
-        if let Some(stand) = best_adjacent_stand(grid, (bx, by), from) {
+        if let Some(stand) = crate::pathfinding::best_adjacent_stand_filtered(
+            grid,
+            (bx, by),
+            from,
+            |stand| stand_available_for_eat(stand, occupancy, reserved_stands),
+        ) {
             return Some(((bx, by), stand));
         }
     }
@@ -423,29 +469,70 @@ fn nearest_free_bed(
         .map(|(entity, bx, by)| (*entity, *bx, *by))
 }
 
+struct SnapIntent {
+    entity: Entity,
+    target: (i32, i32),
+    target_x: f32,
+    target_y: f32,
+}
+
 pub fn colonist_movement(world: &mut World, dt: f32) {
     let step = MOVE_SPEED * dt;
-    let mut colonists = world.query::<(&mut Position, &mut Path)>();
+    let mut occupancy = colonist_occupancy_map(world);
 
-    for (mut pos, mut path) in colonists.iter_mut(world) {
-        if path.index >= path.waypoints.len() {
+    let mut snap_intents: Vec<SnapIntent> = Vec::new();
+    let mut partial_moves: Vec<(Entity, f32, f32)> = Vec::new();
+
+    {
+        let mut colonists = world.query::<(Entity, &Position, &Path)>();
+        for (entity, pos, path) in colonists.iter(world) {
+            if path.index >= path.waypoints.len() {
+                continue;
+            }
+
+            let (tx, ty) = path.waypoints[path.index];
+            let target_x = tx as f32;
+            let target_y = ty as f32;
+            let dx = target_x - pos.x;
+            let dy = target_y - pos.y;
+            let dist = (dx * dx + dy * dy).sqrt();
+
+            if dist <= step || dist < 0.001 {
+                snap_intents.push(SnapIntent {
+                    entity,
+                    target: (tx, ty),
+                    target_x,
+                    target_y,
+                });
+            } else {
+                partial_moves.push((entity, (dx / dist) * step, (dy / dist) * step));
+            }
+        }
+    }
+
+    for (entity, dx, dy) in partial_moves {
+        if let Some(mut pos) = world.get_mut::<Position>(entity) {
+            pos.x += dx;
+            pos.y += dy;
+        }
+    }
+
+    snap_intents.sort_by_key(|intent| intent.entity);
+
+    for intent in snap_intents {
+        if !is_cell_free(&occupancy, intent.target, intent.entity) {
             continue;
         }
 
-        let (tx, ty) = path.waypoints[path.index];
-        let target_x = tx as f32;
-        let target_y = ty as f32;
-        let dx = target_x - pos.x;
-        let dy = target_y - pos.y;
-        let dist = (dx * dx + dy * dy).sqrt();
+        occupancy.retain(|_, occupant| *occupant != intent.entity);
+        occupancy.insert(intent.target, intent.entity);
 
-        if dist <= step || dist < 0.001 {
-            pos.x = target_x;
-            pos.y = target_y;
+        if let Some(mut pos) = world.get_mut::<Position>(intent.entity) {
+            pos.x = intent.target_x;
+            pos.y = intent.target_y;
+        }
+        if let Some(mut path) = world.get_mut::<Path>(intent.entity) {
             path.index += 1;
-        } else {
-            pos.x += (dx / dist) * step;
-            pos.y += (dy / dist) * step;
         }
     }
 }
@@ -893,5 +980,173 @@ mod tests {
 
         let stand = best_adjacent_stand(&grid, (5, 5), (0, 5)).unwrap();
         assert_eq!(stand, (6, 5));
+    }
+
+    #[test]
+    fn second_colonist_waits_when_snap_target_occupied() {
+        let _grid = grass_grid();
+        let mut world = World::new();
+
+        let blocker = world
+            .spawn((
+                Colonist,
+                Position { x: 10.0, y: 10.0 },
+                Path {
+                    waypoints: vec![(10, 10)],
+                    index: 0,
+                },
+            ))
+            .id();
+
+        let waiter = world
+            .spawn((
+                Colonist,
+                Position { x: 9.0, y: 10.0 },
+                Path {
+                    waypoints: vec![(10, 10)],
+                    index: 0,
+                },
+            ))
+            .id();
+
+        colonist_movement(&mut world, 0.25);
+
+        let blocker_cell = world.get::<Position>(blocker).unwrap().grid_cell();
+        let waiter_cell = world.get::<Position>(waiter).unwrap().grid_cell();
+        assert_eq!(blocker_cell, (10, 10));
+        assert_ne!(waiter_cell, (10, 10));
+        assert_eq!(world.get::<Path>(waiter).unwrap().index, 0);
+    }
+
+    #[test]
+    fn colonists_partial_step_without_snap_blocking() {
+        let _grid = grass_grid();
+        let mut world = World::new();
+
+        world.spawn((
+            Colonist,
+            Position { x: 9.0, y: 10.0 },
+            Path {
+                waypoints: vec![(10, 10)],
+                index: 0,
+            },
+        ));
+
+        world.spawn((
+            Colonist,
+            Position { x: 11.0, y: 10.0 },
+            Path {
+                waypoints: vec![(10, 10)],
+                index: 0,
+            },
+        ));
+
+        colonist_movement(&mut world, 0.01);
+
+        let indices: Vec<_> = world
+            .query::<(&Path, &Colonist)>()
+            .iter(&world)
+            .map(|(path, _)| path.index)
+            .collect();
+        assert_eq!(indices, vec![0, 0]);
+
+        let positions: Vec<_> = world
+            .query::<(&Position, &Colonist)>()
+            .iter(&world)
+            .map(|(pos, _)| (pos.x, pos.y))
+            .collect();
+        assert!(positions.iter().all(|&(x, y)| x != 10.0 || y != 10.0));
+    }
+
+    #[test]
+    fn eat_assignment_skips_stand_occupied_by_colonist() {
+        let mut grid = grass_grid();
+        assert!(grid.place_building(10, 10, BuildingType::BerryBush));
+
+        let mut world = World::new();
+        world.spawn((
+            Building,
+            Position {
+                x: 10.0,
+                y: 10.0,
+            },
+            BuildingType::BerryBush,
+            BerrySupply::new(3),
+        ));
+
+        world.spawn((
+            Colonist,
+            Position { x: 9.0, y: 10.0 },
+            Needs::new_full(),
+            Task::default(),
+            Path::default(),
+        ));
+
+        let hungry = world
+            .spawn((
+                Colonist,
+                Position { x: 5.0, y: 10.0 },
+                Needs {
+                    food: NEED_THRESHOLD - 1.0,
+                    sleep: 100.0,
+                },
+                Task::default(),
+                Path::default(),
+            ))
+            .id();
+
+        auto_assign_tasks(&mut world, &grid);
+
+        let task = world.get::<Task>(hungry).unwrap();
+        assert_eq!(task.kind, TaskKind::Eat);
+        assert_ne!((task.target_x, task.target_y), (9, 10));
+    }
+
+    #[test]
+    fn only_one_colonist_assigned_single_bush_stand() {
+        let mut grid = grass_grid();
+        grid.terrain[WorldGrid::index(10, 9).unwrap()] = TerrainType::Water;
+        grid.terrain[WorldGrid::index(10, 11).unwrap()] = TerrainType::Water;
+        grid.terrain[WorldGrid::index(9, 10).unwrap()] = TerrainType::Water;
+        assert!(grid.place_building(10, 10, BuildingType::BerryBush));
+
+        let mut world = World::new();
+        world.spawn((
+            Building,
+            Position {
+                x: 10.0,
+                y: 10.0,
+            },
+            BuildingType::BerryBush,
+            BerrySupply::new(3),
+        ));
+
+        let hungry = |world: &mut World, x: f32, y: f32| {
+            world
+                .spawn((
+                    Colonist,
+                    Position { x, y },
+                    Needs {
+                        food: NEED_THRESHOLD - 1.0,
+                        sleep: 100.0,
+                    },
+                    Task::default(),
+                    Path::default(),
+                ))
+                .id()
+        };
+
+        let c1 = hungry(&mut world, 5.0, 10.0);
+        let c2 = hungry(&mut world, 6.0, 10.0);
+
+        auto_assign_tasks(&mut world, &grid);
+
+        let assigned: Vec<_> = [c1, c2]
+            .iter()
+            .filter(|&&e| world.get::<Task>(e).unwrap().kind == TaskKind::Eat)
+            .filter(|&&e| (world.get::<Task>(e).unwrap().target_x, world.get::<Task>(e).unwrap().target_y) == (11, 10))
+            .copied()
+            .collect();
+        assert_eq!(assigned.len(), 1);
     }
 }

@@ -57,6 +57,28 @@ Colonists SHALL move continuously between path waypoints at a configurable speed
 - **WHEN** a colonist's remaining distance to the current waypoint is less than or equal to one tick's travel distance
 - **THEN** the colonist snaps to the waypoint coordinates and advances to the next waypoint
 
+### Requirement: Unique settled cell occupancy
+At most one colonist SHALL occupy a grid cell when movement completes a step to that cell. A colonist's settled cell is its current grid cell derived from position.
+
+#### Scenario: Second colonist waits for occupied cell
+- **WHEN** a colonist completes movement toward a waypoint cell that is already occupied by another colonist's settled position
+- **THEN** the colonist does not snap to that cell, does not advance its path index, and remains at its previous position until the cell is free
+
+#### Scenario: Idle colonist occupies its cell
+- **WHEN** a colonist is idle (including after completing an Eat task on a stand tile)
+- **THEN** its current grid cell is occupied and no other colonist may settle on that cell
+
+### Requirement: Pass-through during movement
+Colonists MAY pass through each other while moving between grid cells. Pathfinding SHALL NOT treat other colonists as impassable obstacles.
+
+#### Scenario: Colonists cross paths mid-movement
+- **WHEN** two colonists move toward each other and their interpolated positions overlap before either completes a waypoint snap
+- **THEN** both continue moving without blocking each other
+
+#### Scenario: Pathfinding ignores colonist positions
+- **WHEN** A* pathfinding computes a route
+- **THEN** only terrain and building walkability affect the path, not colonist positions
+
 ### Requirement: Automatic task assignment
 When a colonist's need drops below the critical threshold, the simulation SHALL automatically assign a task to satisfy that need. Pathfinding SHALL use the colonist's current grid cell, derived by flooring world coordinates.
 
@@ -107,11 +129,11 @@ When a colonist with a Build task is on the construction site tile, the simulati
 - **THEN** the Build task is cancelled, the site reservation is released, and the colonist returns to idle
 
 ### Requirement: A* pathfinding
-Colonists SHALL use A* pathfinding to navigate to their task destination across walkable tiles.
+Colonists SHALL use A* pathfinding to navigate to their task destination across walkable tiles. Other colonists SHALL NOT be treated as impassable during path computation.
 
 #### Scenario: Path to berry bush
 - **WHEN** a colonist is assigned an Eat task at a distant BerryBush
-- **THEN** the colonist follows a valid A* path to an adjacent stand tile next to the bush, avoiding impassable tiles
+- **THEN** the colonist follows a valid A* path to an adjacent stand tile next to the bush, avoiding impassable tiles but not avoiding cells occupied by other colonists
 
 #### Scenario: No path available
 - **WHEN** no walkable path exists to the task stand tile
@@ -141,6 +163,17 @@ When no orthogonally adjacent walkable tile exists next to a BerryBush, the simu
 #### Scenario: Bush surrounded by obstacles
 - **WHEN** a colonist needs Food and the only BerryBush with berries has no adjacent walkable tiles
 - **THEN** no Eat task is assigned for that bush and the colonist remains idle or seeks another bush
+
+### Requirement: Eat assignment prefers unoccupied stand tiles
+When assigning an Eat task, the simulation SHALL select an adjacent stand tile that is not occupied by another colonist's settled position and not already assigned as a stand to another colonist in the same assignment pass.
+
+#### Scenario: Occupied stand skipped for eat assignment
+- **WHEN** a colonist needs Food and the nearest BerryBush has adjacent stand tiles, but the best stand tile is occupied by another colonist
+- **THEN** the simulation assigns an Eat task using another free adjacent stand tile for that bush, or a stand tile for another bush, or no Eat task if none are available
+
+#### Scenario: Single stand queue at bush
+- **WHEN** two colonists need Food and a BerryBush has only one adjacent stand tile
+- **THEN** at most one colonist is assigned that stand tile per assignment pass; the other colonist is assigned elsewhere or remains idle until the stand is free
 
 ### Requirement: Single bed occupancy
 At most one colonist SHALL occupy or be reserved for a given Bed at any time.

@@ -119,11 +119,27 @@ pub fn best_adjacent_stand(
     building: (i32, i32),
     from: (i32, i32),
 ) -> Option<(i32, i32)> {
+    best_adjacent_stand_filtered(grid, building, from, |_| true)
+}
+
+/// Like `best_adjacent_stand`, but skips stands for which `is_available` returns false.
+pub fn best_adjacent_stand_filtered<F>(
+    grid: &WorldGrid,
+    building: (i32, i32),
+    from: (i32, i32),
+    mut is_available: F,
+) -> Option<(i32, i32)>
+where
+    F: FnMut((i32, i32)) -> bool,
+{
     let mut best: Option<((i32, i32), usize)> = None;
 
     for (dx, dy) in ORTHOGONAL_DIRS {
         let stand = (building.0 + dx, building.1 + dy);
         if !grid.is_walkable(stand.0, stand.1) {
+            continue;
+        }
+        if !is_available(stand) {
             continue;
         }
         if let Some(path) = find_path(grid, from, stand) {
