@@ -35,8 +35,30 @@ Each colonist SHALL have two needs: Food and Sleep, each represented as a value 
 - **WHEN** a colonist's Food or Sleep value drops below a defined threshold (e.g., 30)
 - **THEN** the colonist is flagged as needing that resource
 
+### Requirement: Float world position
+Each colonist SHALL have a world position expressed as floating-point coordinates in tile units, where integer values align to tile centers (e.g. cell `(5, 7)` is world position `(5.0, 7.0)`).
+
+#### Scenario: Spawn at tile center
+- **WHEN** a colonist is spawned on grid cell `(x, y)`
+- **THEN** its world position is initialized to `(x as f32, y as f32)`
+
+#### Scenario: Snapshot exposes float position
+- **WHEN** a state snapshot is built
+- **THEN** each colonist's `x` and `y` fields are floating-point tile coordinates
+
+### Requirement: Continuous movement
+Colonists SHALL move continuously between path waypoints at a configurable speed (`MOVE_SPEED` tiles per second), advancing by fractional tile amounts each tick without rounding position to integer cells during transit.
+
+#### Scenario: Sub-tile movement per tick
+- **WHEN** a colonist is moving toward a waypoint and the remaining distance exceeds one tick's travel distance
+- **THEN** the colonist's world position advances by a fractional amount less than one full tile
+
+#### Scenario: Arrive at waypoint
+- **WHEN** a colonist's remaining distance to the current waypoint is less than or equal to one tick's travel distance
+- **THEN** the colonist snaps to the waypoint coordinates and advances to the next waypoint
+
 ### Requirement: Automatic task assignment
-When a colonist's need drops below the critical threshold, the simulation SHALL automatically assign a task to satisfy that need.
+When a colonist's need drops below the critical threshold, the simulation SHALL automatically assign a task to satisfy that need. Pathfinding SHALL use the colonist's current grid cell, derived by flooring world coordinates.
 
 #### Scenario: Auto-assign eat task
 - **WHEN** a colonist's Food need drops below the threshold and a BerryBush with berries remaining exists
@@ -62,7 +84,7 @@ Colonists SHALL use A* pathfinding to navigate to their task destination across 
 - **THEN** the task is cancelled and the colonist returns to idle
 
 ### Requirement: Task execution
-When a colonist reaches its task destination, the simulation SHALL execute the task interaction and restore the relevant need.
+When a colonist reaches its task destination, the simulation SHALL execute the task interaction and restore the relevant need. Arrival SHALL be determined when the path is complete and the colonist's floored grid cell matches the task target cell.
 
 #### Scenario: Complete eat task
 - **WHEN** a colonist with an Eat task arrives at a BerryBush tile
