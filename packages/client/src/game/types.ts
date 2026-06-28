@@ -1,6 +1,6 @@
 export type TerrainType = 'Water' | 'Sand' | 'Grass';
 export type BuildingType = 'Wall' | 'Bed' | 'BerryBush';
-export type TaskKind = 'Idle' | 'Eat' | 'Sleep';
+export type TaskKind = 'Idle' | 'Eat' | 'Sleep' | 'Build';
 
 export interface TileSnapshot {
   x: number;
@@ -13,6 +13,13 @@ export interface BuildingSnapshot {
   y: number;
   building: BuildingType;
   berries?: number;
+}
+
+export interface ConstructionSiteSnapshot {
+  x: number;
+  y: number;
+  building: BuildingType;
+  progress: number;
 }
 
 export interface ColonistSnapshot {
@@ -28,6 +35,7 @@ export interface ColonistSnapshot {
 export interface StateSnapshot {
   tiles: TileSnapshot[];
   buildings: BuildingSnapshot[];
+  construction_sites: ConstructionSiteSnapshot[];
   colonists: ColonistSnapshot[];
   paused: boolean;
   speed: number;
@@ -38,6 +46,7 @@ export type OutgoingEvent =
       type: 'state_snapshot';
       tiles: TileSnapshot[];
       buildings: BuildingSnapshot[];
+      construction_sites: ConstructionSiteSnapshot[];
       colonists: ColonistSnapshot[];
       paused: boolean;
       speed: number;

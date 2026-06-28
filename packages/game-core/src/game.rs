@@ -3,15 +3,18 @@ use serde_json;
 use wasm_bindgen::prelude::*;
 
 use crate::components::{
-    BedOccupancy, BerrySupply, BuildingType, ColonistId, ColonistName, Needs, Position, Task,
+    BerrySupply, BuildingType, ColonistId, ColonistName, ConstructionSite, Needs, Position, Task,
+    work_required_for,
 };
 use crate::events::{
-    BuildingSnapshot, ColonistSnapshot, IncomingEvent, OutgoingEvent, StateSnapshot, TileSnapshot,
+    BuildingSnapshot, ColonistSnapshot, ConstructionSiteSnapshot, IncomingEvent, OutgoingEvent,
+    StateSnapshot, TileSnapshot,
 };
 use crate::systems::{
-    auto_assign_tasks, colonist_movement, needs_decay, spawn_colonists, task_execution,
+    auto_assign_tasks, colonist_movement, is_valid_build_tile, needs_decay, spawn_colonists,
+    task_execution,
 };
-use crate::world::{generate_world, WorldGrid, BERRIES_PER_BUSH, WORLD_SIZE};
+use crate::world::{generate_world, WorldGrid, WORLD_SIZE};
 
 #[wasm_bindgen]
 pub struct Game {
@@ -82,33 +85,20 @@ impl Game {
                 self.speed = multiplier.clamp(0.1, 10.0);
             }
             IncomingEvent::Build { building, x, y } => {
-                if self.grid.place_building(x, y, building) {
-                    let position = Position {
+                if !is_valid_build_tile(&mut self.world, &self.grid, x, y) {
+                    return;
+                }
+                self.world.spawn((
+                    ConstructionSite {
+                        building_type: building,
+                        work_remaining: work_required_for(building),
+                        reserved_by: None,
+                    },
+                    Position {
                         x: x as f32,
                         y: y as f32,
-                    };
-                    if building == BuildingType::BerryBush {
-                        self.world.spawn((
-                            crate::components::Building,
-                            position,
-                            building,
-                            BerrySupply::new(BERRIES_PER_BUSH),
-                        ));
-                    } else if building == BuildingType::Bed {
-                        self.world.spawn((
-                            crate::components::Building,
-                            position,
-                            building,
-                            BedOccupancy::default(),
-                        ));
-                    } else {
-                        self.world.spawn((
-                            crate::components::Building,
-                            position,
-                            building,
-                        ));
-                    }
-                }
+                    },
+                ));
             }
         }
     }
@@ -156,9 +146,30 @@ impl Game {
             })
             .collect();
 
+        let construction_sites: Vec<ConstructionSiteSnapshot> = self
+            .world
+            .query::<(&Position, &ConstructionSite)>()
+            .iter(&self.world)
+            .map(|(pos, site)| {
+                let total = work_required_for(site.building_type);
+                let progress = if total > 0.0 {
+                    1.0 - (site.work_remaining / total).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                };
+                ConstructionSiteSnapshot {
+                    x: pos.x as i32,
+                    y: pos.y as i32,
+                    building: site.building_type,
+                    progress,
+                }
+            })
+            .collect();
+
         StateSnapshot {
             tiles,
             buildings,
+            construction_sites,
             colonists,
             paused: self.paused,
             speed: self.speed,

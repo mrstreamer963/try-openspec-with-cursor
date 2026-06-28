@@ -33,14 +33,14 @@ The simulation SHALL support placing three building types: Bed, BerryBush, and W
 
 #### Scenario: Place bed on grass
 - **WHEN** the host sends a build command for a Bed at a walkable Grass tile
-- **THEN** a Bed building entity is created at that tile position
+- **THEN** a construction order for a Bed is created at that tile and no finished Bed exists until colonist work completes
 
 #### Scenario: Reject build on water
 - **WHEN** the host sends a build command at a Water tile
-- **THEN** the build is rejected and no building entity is created
+- **THEN** the build is rejected and no construction order or building entity is created
 
 #### Scenario: Berry bush provides food
-- **WHEN** a colonist interacts with a BerryBush building that has berries remaining
+- **WHEN** a colonist interacts with a completed BerryBush building that has berries remaining
 - **THEN** the colonist's Food need increases and the bush loses one berry
 
 #### Scenario: Depleted berry bush removed
@@ -48,7 +48,7 @@ The simulation SHALL support placing three building types: Bed, BerryBush, and W
 - **THEN** the building is removed from the world grid and no longer appears in snapshots
 
 #### Scenario: Bed satisfies sleep
-- **WHEN** a colonist interacts with a Bed building
+- **WHEN** a colonist interacts with a completed Bed building
 - **THEN** the colonist's Sleep need increases
 
 ### Requirement: Resource-free construction
@@ -56,11 +56,37 @@ Building placement SHALL NOT require any resource cost in v1.
 
 #### Scenario: Unlimited building
 - **WHEN** the player places multiple beds in succession
-- **THEN** each placement succeeds without checking or deducting resources
+- **THEN** each construction order is created without checking or deducting resources
 
 ### Requirement: Finite berry supply
-Each newly placed BerryBush SHALL start with a fixed number of berry portions (3).
+Each newly completed BerryBush SHALL start with a fixed number of berry portions (3).
 
 #### Scenario: New bush berry count
-- **WHEN** a BerryBush is placed
-- **THEN** it has exactly 3 berries available
+- **WHEN** a BerryBush construction order completes
+- **THEN** the finished bush has exactly 3 berries available
+
+### Requirement: Construction orders from build commands
+When the host sends a build command for a valid tile, the simulation SHALL create a construction order at that tile instead of an instant finished building.
+
+#### Scenario: Valid construction order
+- **WHEN** the host sends a build command for a Wall at a walkable empty tile with no pending construction
+- **THEN** a construction order for a Wall is created at that tile
+
+#### Scenario: Reject duplicate construction order
+- **WHEN** the host sends a build command at a tile that already has a pending construction order
+- **THEN** the command is rejected and the existing order is unchanged
+
+#### Scenario: Reject build on occupied tile
+- **WHEN** the host sends a build command at a tile that already has a finished building
+- **THEN** the command is rejected
+
+### Requirement: Construction completion
+When a construction order's remaining work reaches zero, the simulation SHALL replace it with a finished building on the world grid.
+
+#### Scenario: Complete wall construction
+- **WHEN** a Wall construction order's work reaches zero
+- **THEN** a Wall building entity exists at that tile, the construction order is removed, and the tile blocks movement
+
+#### Scenario: Construction site walkable until complete
+- **WHEN** a construction order exists at a tile and work remains
+- **THEN** the tile is walkable and no finished building occupies the world grid at that cell

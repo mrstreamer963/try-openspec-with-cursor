@@ -257,6 +257,20 @@ export class PixiRenderer {
 
   private drawBuildings(snapshot: StateSnapshot): void {
     this.buildingsLayer.removeChildren();
+    for (const site of snapshot.construction_sites ?? []) {
+      const g = new Graphics();
+      const pad = 2;
+      g.rect(
+        site.x * TILE_SIZE + pad,
+        site.y * TILE_SIZE + pad,
+        TILE_SIZE - pad * 2,
+        TILE_SIZE - pad * 2,
+      );
+      const color = BUILDING_COLORS[site.building];
+      const alpha = 0.25 + site.progress * 0.45;
+      g.fill({ color, alpha });
+      this.buildingsLayer.addChild(g);
+    }
     for (const b of snapshot.buildings) {
       const g = new Graphics();
       const pad = 2;

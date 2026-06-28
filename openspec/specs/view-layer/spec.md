@@ -20,6 +20,10 @@ The view layer SHALL render content in three PixiJS layers: terrain tiles (botto
 - **WHEN** a colonist stands on a tile with a building
 - **THEN** the colonist sprite renders above the building sprite, which renders above the terrain tile
 
+#### Scenario: Construction site layer
+- **WHEN** a state snapshot includes pending construction sites
+- **THEN** construction site sprites render on the buildings layer below entity sprites and above terrain tiles
+
 ### Requirement: Camera pan and zoom
 The view layer SHALL support camera panning via drag and zooming via scroll wheel or pinch.
 
@@ -67,6 +71,21 @@ The view layer SHALL provide a toolbar with buttons for Wall, Bed, and BerryBush
 #### Scenario: Place building via click
 - **WHEN** the user clicks a tile while in Bed placement mode
 - **THEN** an `IncomingEvent::Build(Bed, x, y)` is sent to the worker
+
+### Requirement: Construction site rendering
+The view layer SHALL render pending construction sites distinctly from completed buildings so the player can see work in progress.
+
+#### Scenario: Ghost sprite for construction site
+- **WHEN** a snapshot contains a construction site at a tile
+- **THEN** a semi-transparent ghost sprite for the target building type is drawn at that tile
+
+#### Scenario: Progress indication
+- **WHEN** a construction site has partial progress
+- **THEN** the ghost sprite visually reflects progress (e.g. opacity or fill proportional to completion)
+
+#### Scenario: Completed building replaces ghost
+- **WHEN** a construction site completes and a finished building appears in the snapshot
+- **THEN** the ghost is removed and the normal building sprite is shown
 
 ### Requirement: Float colonist rendering
 The view layer SHALL render colonist sprites at their float world position from the snapshot, converting tile units to pixels via `position * TILE_SIZE`.

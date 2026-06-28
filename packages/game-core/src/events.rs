@@ -42,9 +42,18 @@ pub struct ColonistSnapshot {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConstructionSiteSnapshot {
+    pub x: i32,
+    pub y: i32,
+    pub building: BuildingType,
+    pub progress: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StateSnapshot {
     pub tiles: Vec<TileSnapshot>,
     pub buildings: Vec<BuildingSnapshot>,
+    pub construction_sites: Vec<ConstructionSiteSnapshot>,
     pub colonists: Vec<ColonistSnapshot>,
     pub paused: bool,
     pub speed: f32,

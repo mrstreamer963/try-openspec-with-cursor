@@ -89,6 +89,17 @@ pub enum TaskKind {
     Idle,
     Eat,
     Sleep,
+    Build,
+}
+
+pub const BUILD_WORK_PER_TICK: f32 = 1.0;
+
+pub fn work_required_for(building: BuildingType) -> f32 {
+    match building {
+        BuildingType::Wall => 30.0,
+        BuildingType::Bed => 50.0,
+        BuildingType::BerryBush => 40.0,
+    }
 }
 
 #[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
@@ -127,6 +138,13 @@ pub struct Colonist;
 
 #[derive(Component)]
 pub struct Building;
+
+#[derive(Component, Clone, Copy, Debug)]
+pub struct ConstructionSite {
+    pub building_type: BuildingType,
+    pub work_remaining: f32,
+    pub reserved_by: Option<Entity>,
+}
 
 #[derive(Component, Default)]
 pub struct BedOccupancy {
