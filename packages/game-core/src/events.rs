@@ -31,8 +31,8 @@ pub struct BuildingSnapshot {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ColonistSnapshot {
     pub id: u32,
-    pub x: i32,
-    pub y: i32,
+    pub x: f32,
+    pub y: f32,
     pub food: f32,
     pub sleep: f32,
     pub task: TaskKind,

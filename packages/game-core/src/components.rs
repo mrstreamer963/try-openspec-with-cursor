@@ -1,10 +1,16 @@
 use bevy_ecs::component::Component;
 use serde::{Deserialize, Serialize};
 
-#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Position {
-    pub x: i32,
-    pub y: i32,
+    pub x: f32,
+    pub y: f32,
+}
+
+impl Position {
+    pub fn grid_cell(self) -> (i32, i32) {
+        (self.x.floor() as i32, self.y.floor() as i32)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

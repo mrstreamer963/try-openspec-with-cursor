@@ -3,10 +3,22 @@ import type { ColonistSnapshot, StateSnapshot } from './types';
 import {
   BUILDING_COLORS,
   COLONIST_COLOR,
+  SIM_TICK_MS,
   TERRAIN_COLORS,
   TILE_SIZE,
   WORLD_SIZE,
 } from './types';
+
+interface ColonistMotion {
+  sampleX: number;
+  sampleY: number;
+  sampledAt: number;
+  vx: number;
+  vy: number;
+  visualX: number;
+  visualY: number;
+  initialized: boolean;
+}
 
 export interface CameraState {
   offsetX: number;
@@ -41,6 +53,13 @@ export class PixiRenderer {
   private cameraStart = { offsetX: 0, offsetY: 0 };
   private onSceneClick?: (click: SceneClick) => void;
   private colonistGraphics = new Map<number, Graphics>();
+  private colonistMotion = new Map<number, ColonistMotion>();
+  private pointerDownHandler?: (e: PointerEvent) => void;
+  private pointerUpHandler?: (e: PointerEvent) => void;
+  private pointerMoveHandler?: (e: PointerEvent) => void;
+  private wheelHandler?: (e: WheelEvent) => void;
+  private applyCameraTicker?: () => void;
+  private destroyed = false;
 
   constructor(private mount: HTMLElement) {
     this.app = new Application();
@@ -65,7 +84,34 @@ export class PixiRenderer {
 
     this.centerCamera();
     this.setupInteraction();
-    this.app.ticker.add(() => this.applyCamera());
+    this.applyCameraTicker = () => this.applyCamera();
+    this.app.ticker.add(this.applyCameraTicker);
+  }
+
+  destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+
+    const canvas = this.app.canvas;
+    if (this.pointerDownHandler) {
+      canvas.removeEventListener('pointerdown', this.pointerDownHandler);
+    }
+    if (this.pointerUpHandler) {
+      window.removeEventListener('pointerup', this.pointerUpHandler);
+    }
+    if (this.pointerMoveHandler) {
+      window.removeEventListener('pointermove', this.pointerMoveHandler);
+    }
+    if (this.wheelHandler) {
+      canvas.removeEventListener('wheel', this.wheelHandler);
+    }
+
+    if (this.applyCameraTicker) {
+      this.app.ticker.remove(this.applyCameraTicker);
+    }
+
+    this.onSceneClick = undefined;
+    this.app.destroy(true);
   }
 
   setOnSceneClick(handler: (click: SceneClick) => void): void {
@@ -79,7 +125,13 @@ export class PixiRenderer {
       this.terrainDrawn = true;
     }
     this.drawBuildings(snapshot);
-    this.drawColonists(snapshot);
+    this.syncColonistMotion(snapshot);
+    this.drawColonistsFrame();
+  }
+
+  /** Advance colonist visuals and redraw entities (call every animation frame). */
+  renderFrame(): void {
+    this.drawColonistsFrame();
   }
 
   startRenderLoop(onFrame: () => void): void {
@@ -106,13 +158,14 @@ export class PixiRenderer {
   private setupInteraction(): void {
     const canvas = this.app.canvas;
 
-    canvas.addEventListener('pointerdown', (e) => {
+    this.pointerDownHandler = (e) => {
       this.isDragging = true;
       this.dragStart = { x: e.clientX, y: e.clientY };
       this.cameraStart = { ...this.camera };
-    });
+    };
+    canvas.addEventListener('pointerdown', this.pointerDownHandler);
 
-    window.addEventListener('pointerup', (e) => {
+    this.pointerUpHandler = (e) => {
       if (!this.isDragging) return;
       const dx = e.clientX - this.dragStart.x;
       const dy = e.clientY - this.dragStart.y;
@@ -121,38 +174,37 @@ export class PixiRenderer {
       if (!wasDrag) {
         this.handleClick(e.clientX, e.clientY);
       }
-    });
+    };
+    window.addEventListener('pointerup', this.pointerUpHandler);
 
-    window.addEventListener('pointermove', (e) => {
+    this.pointerMoveHandler = (e) => {
       if (!this.isDragging) return;
       const dx = e.clientX - this.dragStart.x;
       const dy = e.clientY - this.dragStart.y;
       this.camera.offsetX = this.cameraStart.offsetX + dx;
       this.camera.offsetY = this.cameraStart.offsetY + dy;
       this.applyCamera();
-    });
+    };
+    window.addEventListener('pointermove', this.pointerMoveHandler);
 
-    canvas.addEventListener(
-      'wheel',
-      (e) => {
-        e.preventDefault();
-        const rect = canvas.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left;
-        const mouseY = e.clientY - rect.top;
+    this.wheelHandler = (e) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
 
-        const worldX = (mouseX - this.camera.offsetX) / this.camera.zoom;
-        const worldY = (mouseY - this.camera.offsetY) / this.camera.zoom;
+      const worldX = (mouseX - this.camera.offsetX) / this.camera.zoom;
+      const worldY = (mouseY - this.camera.offsetY) / this.camera.zoom;
 
-        const factor = e.deltaY < 0 ? 1.1 : 0.9;
-        const newZoom = Math.min(3, Math.max(0.3, this.camera.zoom * factor));
+      const factor = e.deltaY < 0 ? 1.1 : 0.9;
+      const newZoom = Math.min(3, Math.max(0.3, this.camera.zoom * factor));
 
-        this.camera.offsetX = mouseX - worldX * newZoom;
-        this.camera.offsetY = mouseY - worldY * newZoom;
-        this.camera.zoom = newZoom;
-        this.applyCamera();
-      },
-      { passive: false },
-    );
+      this.camera.offsetX = mouseX - worldX * newZoom;
+      this.camera.offsetY = mouseY - worldY * newZoom;
+      this.camera.zoom = newZoom;
+      this.applyCamera();
+    };
+    canvas.addEventListener('wheel', this.wheelHandler, { passive: false });
   }
 
   private handleClick(clientX: number, clientY: number): void {
@@ -165,7 +217,17 @@ export class PixiRenderer {
 
     if (tileX < 0 || tileY < 0 || tileX >= WORLD_SIZE || tileY >= WORLD_SIZE) return;
 
-    const colonist = this.snapshot?.colonists.find((c) => c.x === tileX && c.y === tileY);
+    const hitRadius = TILE_SIZE * 0.35;
+    const colonist = this.snapshot?.colonists.find((c) => {
+      const motion = this.colonistMotion.get(c.id);
+      const wx = motion?.visualX ?? c.x;
+      const wy = motion?.visualY ?? c.y;
+      const cx = wx * TILE_SIZE + TILE_SIZE / 2;
+      const cy = wy * TILE_SIZE + TILE_SIZE / 2;
+      const dx = localX - cx;
+      const dy = localY - cy;
+      return dx * dx + dy * dy <= hitRadius * hitRadius;
+    });
     if (colonist) {
       this.onSceneClick({ kind: 'colonist', colonist });
       return;
@@ -200,10 +262,77 @@ export class PixiRenderer {
     }
   }
 
-  private drawColonists(snapshot: StateSnapshot): void {
+  private syncColonistMotion(snapshot: StateSnapshot): void {
+    const now = performance.now();
     const seen = new Set<number>();
+
     for (const c of snapshot.colonists) {
       seen.add(c.id);
+      let motion = this.colonistMotion.get(c.id);
+      if (!motion) {
+        motion = {
+          sampleX: c.x,
+          sampleY: c.y,
+          sampledAt: now,
+          vx: 0,
+          vy: 0,
+          visualX: c.x,
+          visualY: c.y,
+          initialized: false,
+        };
+        this.colonistMotion.set(c.id, motion);
+      }
+
+      if (motion.initialized) {
+        const dt = (now - motion.sampledAt) / 1000;
+        if (dt > 0) {
+          motion.vx = (c.x - motion.sampleX) / dt;
+          motion.vy = (c.y - motion.sampleY) / dt;
+        }
+      } else {
+        motion.visualX = c.x;
+        motion.visualY = c.y;
+        motion.initialized = true;
+      }
+
+      motion.sampleX = c.x;
+      motion.sampleY = c.y;
+      motion.sampledAt = now;
+    }
+
+    for (const id of this.colonistMotion.keys()) {
+      if (!seen.has(id)) {
+        this.colonistMotion.delete(id);
+      }
+    }
+  }
+
+  private drawColonistsFrame(): void {
+    if (!this.snapshot) return;
+
+    const now = performance.now();
+    const paused = this.snapshot.paused;
+    const seen = new Set<number>();
+
+    for (const c of this.snapshot.colonists) {
+      seen.add(c.id);
+      const motion = this.colonistMotion.get(c.id);
+      if (!motion) continue;
+
+      if (paused) {
+        motion.visualX = motion.sampleX;
+        motion.visualY = motion.sampleY;
+        motion.vx = 0;
+        motion.vy = 0;
+      } else {
+        const elapsed = (now - motion.sampledAt) / 1000;
+        // Extrapolate between 20 Hz snapshots so rAF draws smooth motion.
+        const maxExtrapolate = (SIM_TICK_MS / 1000) * 1.25;
+        const t = Math.min(elapsed, maxExtrapolate);
+        motion.visualX = motion.sampleX + motion.vx * t;
+        motion.visualY = motion.sampleY + motion.vy * t;
+      }
+
       let g = this.colonistGraphics.get(c.id);
       if (!g) {
         g = new Graphics();
@@ -211,8 +340,8 @@ export class PixiRenderer {
         this.entitiesLayer.addChild(g);
       }
       g.clear();
-      const cx = c.x * TILE_SIZE + TILE_SIZE / 2;
-      const cy = c.y * TILE_SIZE + TILE_SIZE / 2;
+      const cx = motion.visualX * TILE_SIZE + TILE_SIZE / 2;
+      const cy = motion.visualY * TILE_SIZE + TILE_SIZE / 2;
       g.circle(cx, cy, TILE_SIZE * 0.35);
       g.fill(COLONIST_COLOR);
     }

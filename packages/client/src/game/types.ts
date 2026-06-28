@@ -49,6 +49,8 @@ export type BuildMode = BuildingType | null;
 
 export const TILE_SIZE = 16;
 export const WORLD_SIZE = 50;
+/** Wall-clock interval between simulation snapshots from the worker (ms). */
+export const SIM_TICK_MS = 50;
 
 export const TERRAIN_COLORS: Record<TerrainType, number> = {
   Water: 0x2b6cb0,

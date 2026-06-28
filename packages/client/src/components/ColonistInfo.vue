@@ -11,7 +11,7 @@ defineProps<{
     <h3>Colonist #{{ colonist.id }}</h3>
     <dl>
       <dt>Position</dt>
-      <dd>{{ colonist.x }}, {{ colonist.y }}</dd>
+      <dd>{{ Math.floor(colonist.x) }}, {{ Math.floor(colonist.y) }}</dd>
       <dt>Food</dt>
       <dd>
         <div class="bar"><div class="fill food" :style="{ width: colonist.food + '%' }" /></div>

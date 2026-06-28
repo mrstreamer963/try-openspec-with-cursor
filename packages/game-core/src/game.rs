@@ -78,7 +78,10 @@ impl Game {
                 if self.grid.place_building(x, y, building) {
                     let _ = self.world.spawn((
                         crate::components::Building,
-                        Position { x, y },
+                        Position {
+                            x: x as f32,
+                            y: y as f32,
+                        },
                         building,
                     ));
                 }
@@ -107,8 +110,8 @@ impl Game {
             .query::<(&Position, &BuildingType)>()
             .iter(&self.world)
             .map(|(pos, bt)| BuildingSnapshot {
-                x: pos.x,
-                y: pos.y,
+                x: pos.x as i32,
+                y: pos.y as i32,
                 building: *bt,
             })
             .collect();

@@ -66,16 +66,13 @@ onMounted(async () => {
   });
 
   renderer.startRenderLoop(() => {
-    const snap = latestSnapshot.value;
-    if (snap && renderer) {
-      renderer.updateSnapshot(snap);
-    }
+    renderer?.renderFrame();
   });
 });
 
 onUnmounted(() => {
   gameManager?.destroy();
-  renderer?.app.destroy(true);
+  renderer?.destroy();
 });
 
 function togglePause(): void {

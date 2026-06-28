@@ -24,7 +24,10 @@ pub fn spawn_colonists(world: &mut World, grid: &WorldGrid) -> u32 {
                     .spawn((
                         Colonist,
                         ColonistId(next_id),
-                        Position { x, y },
+                        Position {
+                            x: x as f32,
+                            y: y as f32,
+                        },
                         Needs::new_full(),
                         Task::default(),
                         Path::default(),
@@ -49,7 +52,10 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
     let buildings: Vec<(i32, i32, BuildingType)> = {
         let mut q = world.query::<(&Position, &BuildingType)>();
         q.iter(world)
-            .map(|(pos, bt)| (pos.x, pos.y, *bt))
+            .map(|(pos, bt)| {
+                let (gx, gy) = pos.grid_cell();
+                (gx, gy, *bt)
+            })
             .collect()
     };
 
@@ -78,7 +84,8 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
             continue;
         };
 
-        let target = nearest_building_for_need(pos.x, pos.y, need_kind, &buildings);
+        let (gx, gy) = pos.grid_cell();
+        let target = nearest_building_for_need(gx, gy, need_kind, &buildings);
         let Some((tx, ty, _)) = target else {
             continue;
         };
@@ -88,7 +95,7 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
             NeedKind::Sleep => TaskKind::Sleep,
         };
 
-        if let Some(waypoints) = find_path(grid, (pos.x, pos.y), (tx, ty)) {
+        if let Some(waypoints) = find_path(grid, (gx, gy), (tx, ty)) {
             if waypoints.len() > 1 {
                 path.waypoints = waypoints[1..].to_vec();
             } else {
@@ -129,17 +136,19 @@ pub fn colonist_movement(world: &mut World, dt: f32) {
         }
 
         let (tx, ty) = path.waypoints[path.index];
-        let dx = (tx - pos.x) as f32;
-        let dy = (ty - pos.y) as f32;
+        let target_x = tx as f32;
+        let target_y = ty as f32;
+        let dx = target_x - pos.x;
+        let dy = target_y - pos.y;
         let dist = (dx * dx + dy * dy).sqrt();
 
         if dist <= step || dist < 0.001 {
-            pos.x = tx;
-            pos.y = ty;
+            pos.x = target_x;
+            pos.y = target_y;
             path.index += 1;
         } else {
-            pos.x += (dx / dist * step).round() as i32;
-            pos.y += (dy / dist * step).round() as i32;
+            pos.x += (dx / dist) * step;
+            pos.y += (dy / dist) * step;
         }
     }
 }
@@ -159,11 +168,12 @@ pub fn task_execution(world: &mut World, grid: &WorldGrid) {
         if path.index < path.waypoints.len() {
             continue;
         }
-        if pos.x != task.target_x || pos.y != task.target_y {
+        let (gx, gy) = pos.grid_cell();
+        if gx != task.target_x || gy != task.target_y {
             continue;
         }
 
-        let building = grid.building_at(pos.x, pos.y);
+        let building = grid.building_at(gx, gy);
         let satisfied = match task.kind {
             TaskKind::Eat => building == Some(BuildingType::BerryBush),
             TaskKind::Sleep => building == Some(BuildingType::Bed),
