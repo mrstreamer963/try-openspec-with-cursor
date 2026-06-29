@@ -1481,23 +1481,22 @@ pub fn task_execution(world: &mut World, grid: &mut WorldGrid, content: &Content
 
                 if let Some(be) = building_entity_at(world, building_x, building_y) {
                     for effect in &interaction.effects {
-                        match effect {
-                            InteractionEffect::ConsumeSupply { amount, .. } => {
-                                if let Some(mut supply) = world.get_mut::<BerrySupply>(be) {
-                                    if supply.remaining >= *amount {
-                                        supply.remaining -= amount;
-                                        ate = true;
-                                        depleted = supply.remaining == 0;
-                                        building_entity = Some(be);
-                                    }
+                        if let InteractionEffect::ConsumeSupply { amount, .. } = effect {
+                            if let Some(mut supply) = world.get_mut::<BerrySupply>(be) {
+                                if supply.remaining >= *amount {
+                                    supply.remaining -= amount;
+                                    ate = true;
+                                    depleted = supply.remaining == 0;
+                                    building_entity = Some(be);
                                 }
                             }
-                            InteractionEffect::RestoreNeed { need, amount } => {
-                                if ate {
-                                    if let Some(mut needs) = world.get_mut::<Needs>(colonist_entity)
-                                    {
-                                        needs.set(*need, *amount);
-                                    }
+                        }
+                    }
+                    if ate {
+                        for effect in &interaction.effects {
+                            if let InteractionEffect::RestoreNeed { need, amount } = effect {
+                                if let Some(mut needs) = world.get_mut::<Needs>(colonist_entity) {
+                                    needs.set(*need, *amount);
                                 }
                             }
                         }
@@ -1879,6 +1878,52 @@ mod tests {
             (task.target_x - task.building_x).abs() + (task.target_y - task.building_y).abs(),
             1
         );
+    }
+
+    #[test]
+    fn eat_restores_need_regardless_of_effect_order() {
+        let mut content = test_content();
+        let bush_idx = content.berry_bush_building.0 as usize;
+        content.buildings[bush_idx].interactions[0].effects.reverse();
+
+        let mut grid = grass_grid(&content);
+        assert!(grid.place_building(&content, 10, 10, content.berry_bush_building));
+
+        let mut world = World::new();
+        let bush = world
+            .spawn((
+                Building,
+                Position { x: 10.0, y: 10.0 },
+                BuildingKind(content.berry_bush_building),
+                BerrySupply::new(3),
+            ))
+            .id();
+
+        let colonist = world
+            .spawn((
+                Colonist,
+                Position { x: 9.0, y: 10.0 },
+                Needs::with_values(
+                    &content,
+                    content.need_def(content.food_need).critical_threshold - 1.0,
+                    100.0,
+                ),
+                Task {
+                    kind: TaskKind::Eat,
+                    building_x: 10,
+                    building_y: 10,
+                    target_x: 9,
+                    target_y: 10,
+                },
+                Path::default(),
+            ))
+            .id();
+
+        task_execution(&mut world, &mut grid, &content, 0.05);
+
+        let needs = world.get::<Needs>(colonist).unwrap();
+        assert_eq!(needs.get(content.food_need), 100.0);
+        assert_eq!(world.get::<BerrySupply>(bush).unwrap().remaining, 2);
     }
 
     #[test]
