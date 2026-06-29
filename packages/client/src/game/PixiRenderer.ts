@@ -294,6 +294,20 @@ export class PixiRenderer {
       g.fill({ color, alpha });
       this.buildingsLayer.addChild(g);
     }
+    for (const site of snapshot.deconstruction_sites ?? []) {
+      const g = new Graphics();
+      const pad = 2;
+      g.rect(
+        site.x * TILE_SIZE + pad,
+        site.y * TILE_SIZE + pad,
+        TILE_SIZE - pad * 2,
+        TILE_SIZE - pad * 2,
+      );
+      const alpha = 0.25 + site.progress * 0.45;
+      g.fill({ color: 0xe53e3e, alpha });
+      this.buildingsLayer.addChild(g);
+      this.drawDeconstructionProgressBar(site.x, site.y, site.progress);
+    }
   }
 
   private drawConstructionProgressBar(tileX: number, tileY: number, progress: number): void {
@@ -309,6 +323,25 @@ export class PixiRenderer {
     if (p > 0) {
       bar.rect(x, y, barWidth * p, barHeight);
       bar.fill({ color: 0x48bb78, alpha: 1 });
+    }
+    bar.rect(x, y, barWidth, barHeight);
+    bar.stroke({ color: 0xffffff, width: 1, alpha: 0.65 });
+    this.buildingsLayer.addChild(bar);
+  }
+
+  private drawDeconstructionProgressBar(tileX: number, tileY: number, progress: number): void {
+    const barWidth = TILE_SIZE - 4;
+    const barHeight = 4;
+    const x = tileX * TILE_SIZE + 2;
+    const y = tileY * TILE_SIZE - barHeight - 2;
+    const p = Math.min(1, Math.max(0, progress));
+
+    const bar = new Graphics();
+    bar.rect(x, y, barWidth, barHeight);
+    bar.fill({ color: 0x1a202c, alpha: 0.75 });
+    if (p > 0) {
+      bar.rect(x, y, barWidth * p, barHeight);
+      bar.fill({ color: 0xe53e3e, alpha: 1 });
     }
     bar.rect(x, y, barWidth, barHeight);
     bar.stroke({ color: 0xffffff, width: 1, alpha: 0.65 });

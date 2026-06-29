@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { buildableBuildings, loadBaseContent } from '../content/loadBaseContent';
-import type { BuildMode, BuildingId } from '../game/types';
+import type { BuildingId, ToolMode } from '../game/types';
 
 defineProps<{
-  buildMode: BuildMode;
+  toolMode: ToolMode;
 }>();
 
 const emit = defineEmits<{
-  selectMode: [mode: BuildingId | null];
+  selectMode: [mode: ToolMode];
 }>();
 
 const content = loadBaseContent();
@@ -19,15 +19,26 @@ const tools = buildableBuildings(content).map((b) => ({
 
 <template>
   <div class="toolbar">
-    <button class="btn" :class="{ active: buildMode === null }" @click="emit('selectMode', null)">
+    <button
+      class="btn"
+      :class="{ active: toolMode === null }"
+      @click="emit('selectMode', null)"
+    >
       Select
+    </button>
+    <button
+      class="btn deconstruct"
+      :class="{ active: toolMode === 'deconstruct' }"
+      @click="emit('selectMode', 'deconstruct')"
+    >
+      🔨 Deconstruct
     </button>
     <button
       v-for="tool in tools"
       :key="tool.type"
       class="btn"
-      :class="{ active: buildMode === tool.type }"
-      @click="emit('selectMode', tool.type)"
+      :class="{ active: toolMode === tool.type }"
+      @click="emit('selectMode', tool.type as BuildingId)"
     >
       {{ tool.label }}
     </button>
@@ -61,5 +72,9 @@ const tools = buildableBuildings(content).map((b) => ({
 .btn.active {
   background: #38a169;
   border-color: #48bb78;
+}
+.btn.deconstruct.active {
+  background: #c53030;
+  border-color: #fc8181;
 }
 </style>

@@ -25,6 +25,7 @@ export function parseOutgoingEvent(json: string): ParsedOutgoingEvent | null {
           tiles: parsed.tiles,
           buildings: parsed.buildings,
           construction_sites: parsed.construction_sites ?? [],
+          deconstruction_sites: parsed.deconstruction_sites ?? [],
           colonists: parsed.colonists,
           paused: parsed.paused,
           speed: parsed.speed,

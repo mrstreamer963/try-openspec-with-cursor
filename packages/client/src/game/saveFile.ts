@@ -60,6 +60,9 @@ export function validateSaveFile(raw: unknown): StateSnapshot | string {
   if (!Array.isArray(snapshot.construction_sites)) {
     return 'Save state is missing construction_sites array';
   }
+  if (snapshot.deconstruction_sites != null && !Array.isArray(snapshot.deconstruction_sites)) {
+    return 'Save state deconstruction_sites must be an array';
+  }
   if (!Array.isArray(snapshot.colonists)) {
     return 'Save state is missing colonists array';
   }

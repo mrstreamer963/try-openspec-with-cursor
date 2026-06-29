@@ -4,16 +4,17 @@ use wasm_bindgen::prelude::*;
 
 use crate::components::{
     ActiveStatuses, BedOccupancy, BerrySupply, Building, BuildingKind, Colonist, ColonistId,
-    ColonistName, ConstructionSite, Needs, Path, Position, Task,
+    ColonistName, ConstructionSite, DeconstructionSite, Needs, Path, Position, Task, TaskKind,
 };
 use crate::content::ContentRegistry;
 use crate::events::{
-    BuildingSnapshot, ColonistSnapshot, ConstructionSiteSnapshot, IncomingEvent, OutgoingEvent,
-    StateSnapshot, TileSnapshot,
+    BuildingSnapshot, ColonistSnapshot, ConstructionSiteSnapshot, DeconstructionSiteSnapshot,
+    IncomingEvent, OutgoingEvent, StateSnapshot, TileSnapshot,
 };
 use crate::systems::{
-    auto_assign_tasks, colonist_at_task_stand, colonist_movement, is_valid_build_tile, needs_decay,
-    spawn_colonists, sync_statuses, task_execution,
+    auto_assign_tasks, colonist_at_task_stand, colonist_movement, construction_site_at,
+    deconstruction_site_at, is_valid_build_tile, needs_decay, spawn_colonists, sync_statuses,
+    task_execution,
 };
 use crate::world::{generate_world, WorldGrid, WORLD_SIZE};
 
@@ -118,6 +119,10 @@ impl Game {
                 ));
                 None
             }
+            IncomingEvent::Deconstruct { x, y } => {
+                self.handle_deconstruct(x, y);
+                None
+            }
             IncomingEvent::LoadState { state } => {
                 if let Err(message) = self.restore_from_snapshot(state) {
                     Some(OutgoingEvent::Error { message })
@@ -214,6 +219,25 @@ impl Game {
             ));
         }
 
+        for site in &snapshot.deconstruction_sites {
+            let Some(building_id) = self.content.building_id(&site.building) else {
+                continue;
+            };
+            let total = self.content.work_to_deconstruct(building_id);
+            let work_remaining = total * (1.0 - site.progress.clamp(0.0, 1.0));
+            self.world.spawn((
+                DeconstructionSite {
+                    building_id,
+                    work_remaining,
+                    reserved_by: None,
+                },
+                Position {
+                    x: site.x as f32,
+                    y: site.y as f32,
+                },
+            ));
+        }
+
         for colonist in &snapshot.colonists {
             let mut needs = Needs::new_full(&self.content);
             needs.set(self.content.food_need, colonist.food);
@@ -267,10 +291,16 @@ impl Game {
             q.iter(&self.world).map(|(e, _)| e).collect()
         };
 
+        let decon_sites: Vec<Entity> = {
+            let mut q = self.world.query::<(Entity, &DeconstructionSite)>();
+            q.iter(&self.world).map(|(e, _)| e).collect()
+        };
+
         for entity in colonists
             .into_iter()
             .chain(buildings)
             .chain(sites)
+            .chain(decon_sites)
         {
             let _ = self.world.despawn(entity);
         }
@@ -354,10 +384,31 @@ impl Game {
             })
             .collect();
 
+        let deconstruction_sites: Vec<DeconstructionSiteSnapshot> = self
+            .world
+            .query::<(&Position, &DeconstructionSite)>()
+            .iter(&self.world)
+            .map(|(pos, site)| {
+                let total = self.content.work_to_deconstruct(site.building_id);
+                let progress = if total > 0.0 {
+                    1.0 - (site.work_remaining / total).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                };
+                DeconstructionSiteSnapshot {
+                    x: pos.x as i32,
+                    y: pos.y as i32,
+                    building: self.content.building_str(site.building_id).to_string(),
+                    progress,
+                }
+            })
+            .collect();
+
         StateSnapshot {
             tiles,
             buildings,
             construction_sites,
+            deconstruction_sites,
             colonists,
             paused: self.paused,
             speed: self.speed,
@@ -366,6 +417,79 @@ impl Game {
 }
 
 impl Game {
+    fn handle_deconstruct(&mut self, x: i32, y: i32) {
+        if deconstruction_site_at(&mut self.world, x, y).is_some() {
+            return;
+        }
+
+        if let Some(site_entity) = construction_site_at(&mut self.world, x, y) {
+            let site = match self.world.get::<ConstructionSite>(site_entity) {
+                Some(s) => *s,
+                None => return,
+            };
+            let total = self.content.work_required(site.building_id);
+            if site.work_remaining >= total {
+                if let Some(builder) = site.reserved_by {
+                    if let Some(mut task) = self.world.get_mut::<Task>(builder) {
+                        task.kind = TaskKind::Idle;
+                        task.building_x = 0;
+                        task.building_y = 0;
+                        task.target_x = 0;
+                        task.target_y = 0;
+                    }
+                    if let Some(mut path) = self.world.get_mut::<Path>(builder) {
+                        path.clear();
+                    }
+                }
+                let _ = self.world.despawn(site_entity);
+                return;
+            }
+
+            if let Some(builder) = site.reserved_by {
+                if let Some(mut task) = self.world.get_mut::<Task>(builder) {
+                    task.kind = TaskKind::Idle;
+                    task.building_x = 0;
+                    task.building_y = 0;
+                    task.target_x = 0;
+                    task.target_y = 0;
+                }
+                if let Some(mut path) = self.world.get_mut::<Path>(builder) {
+                    path.clear();
+                }
+            }
+            let building_id = site.building_id;
+            let _ = self.world.despawn(site_entity);
+            self.world.spawn((
+                DeconstructionSite {
+                    building_id,
+                    work_remaining: self.content.work_to_deconstruct(building_id),
+                    reserved_by: None,
+                },
+                Position {
+                    x: x as f32,
+                    y: y as f32,
+                },
+            ));
+            return;
+        }
+
+        let Some(building_id) = self.grid.building_at(x, y) else {
+            return;
+        };
+
+        self.world.spawn((
+            DeconstructionSite {
+                building_id,
+                work_remaining: self.content.work_to_deconstruct(building_id),
+                reserved_by: None,
+            },
+            Position {
+                x: x as f32,
+                y: y as f32,
+            },
+        ));
+    }
+
     pub fn grid(&self) -> &WorldGrid {
         &self.grid
     }
@@ -487,6 +611,10 @@ mod tests {
         assert_eq!(restored.tiles.len(), original.tiles.len());
         assert_eq!(restored.buildings.len(), original.buildings.len());
         assert_eq!(restored.construction_sites.len(), original.construction_sites.len());
+        assert_eq!(
+            restored.deconstruction_sites.len(),
+            original.deconstruction_sites.len()
+        );
         assert_eq!(restored.colonists.len(), original.colonists.len());
 
         for (a, b) in restored.colonists.iter().zip(original.colonists.iter()) {
@@ -525,5 +653,64 @@ mod tests {
         };
         assert_eq!(unchanged.tiles.len(), 2500);
         assert!(!unchanged.paused);
+    }
+
+    #[test]
+    fn deconstruct_event_instant_cancel_at_zero_progress() {
+        let mut game = test_game();
+        game.handle_event(r#"{"type":"build","building":"wall","x":10,"y":10}"#);
+        game.handle_event(r#"{"type":"deconstruct","x":10,"y":10}"#);
+
+        let json = game.get_snapshot();
+        let event: OutgoingEvent = serde_json::from_str(&json).unwrap();
+        let OutgoingEvent::StateSnapshot(snapshot) = event else {
+            panic!("expected state snapshot");
+        };
+
+        assert!(snapshot.construction_sites.is_empty());
+        assert!(snapshot.deconstruction_sites.is_empty());
+    }
+
+    #[test]
+    fn deconstruction_sites_survive_save_load_round_trip() {
+        let mut game = test_game();
+
+        let json = game.get_snapshot();
+        let event: OutgoingEvent = serde_json::from_str(&json).unwrap();
+        let OutgoingEvent::StateSnapshot(mut original) = event else {
+            panic!("expected state snapshot");
+        };
+
+        original.buildings.push(BuildingSnapshot {
+            x: 10,
+            y: 10,
+            building: "wall".to_string(),
+            berries: None,
+        });
+        original.deconstruction_sites.push(DeconstructionSiteSnapshot {
+            x: 10,
+            y: 10,
+            building: "wall".to_string(),
+            progress: 0.5,
+        });
+
+        let load_json =
+            serde_json::to_string(&IncomingEvent::LoadState {
+                state: original.clone(),
+            })
+            .unwrap();
+        let err = game.handle_event(&load_json);
+        assert!(err.is_empty(), "load should succeed: {err}");
+
+        let json2 = game.get_snapshot();
+        let event2: OutgoingEvent = serde_json::from_str(&json2).unwrap();
+        let OutgoingEvent::StateSnapshot(restored) = event2 else {
+            panic!("expected state snapshot");
+        };
+
+        assert_eq!(restored.deconstruction_sites.len(), 1);
+        assert_eq!(restored.deconstruction_sites[0].x, 10);
+        assert_eq!(restored.deconstruction_sites[0].y, 10);
+        assert!((restored.deconstruction_sites[0].progress - 0.5).abs() < 0.01);
     }
 }

@@ -2,6 +2,7 @@ buildings:
   - id: wall
     label: "🧱 Wall"
     work_required: 30
+    work_to_deconstruct: 15
     blocks_movement: true
     blocks_settle: false
     buildable: true
@@ -11,6 +12,7 @@ buildings:
   - id: bed
     label: "🛏 Bed"
     work_required: 50
+    work_to_deconstruct: 25
     blocks_movement: false
     blocks_settle: false
     buildable: true
@@ -28,6 +30,7 @@ buildings:
   - id: berry_bush
     label: "🫐 Berry Bush"
     work_required: 40
+    work_to_deconstruct: 20
     blocks_movement: false
     blocks_settle: true
     buildable: true

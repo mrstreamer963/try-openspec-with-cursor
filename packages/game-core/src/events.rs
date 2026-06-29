@@ -12,6 +12,10 @@ pub enum IncomingEvent {
         x: i32,
         y: i32,
     },
+    Deconstruct {
+        x: i32,
+        y: i32,
+    },
     LoadState { state: StateSnapshot },
 }
 
@@ -56,10 +60,20 @@ pub struct ConstructionSiteSnapshot {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeconstructionSiteSnapshot {
+    pub x: i32,
+    pub y: i32,
+    pub building: String,
+    pub progress: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StateSnapshot {
     pub tiles: Vec<TileSnapshot>,
     pub buildings: Vec<BuildingSnapshot>,
     pub construction_sites: Vec<ConstructionSiteSnapshot>,
+    #[serde(default)]
+    pub deconstruction_sites: Vec<DeconstructionSiteSnapshot>,
     pub colonists: Vec<ColonistSnapshot>,
     pub paused: bool,
     pub speed: f32,

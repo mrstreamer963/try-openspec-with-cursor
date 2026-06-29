@@ -4,12 +4,12 @@ use bevy_ecs::prelude::*;
 
 use crate::components::{
     ActiveStatuses, BedOccupancy, BerrySupply, BuildingKind, Colonist, ColonistId, ColonistName,
-    ConstructionSite, COLONIST_NAME_POOL, Needs, Path, Position, SleepingOnBed, Task, TaskKind,
-    BUILD_WORK_PER_TICK,
+    ConstructionSite, DeconstructionSite, COLONIST_NAME_POOL, Needs, Path, Position, SleepingOnBed,
+    Task, TaskKind, BUILD_WORK_PER_TICK,
 };
 use crate::content::{
-    ApplyCondition, ContentRegistry, InteractionEffect, InteractionMode, NeedId, SpawnPrimitive,
-    StatusId, TaskKindRef,
+    ApplyCondition, BuildingId, ContentRegistry, InteractionEffect, InteractionMode, NeedId,
+    SpawnPrimitive, StatusId, TaskKindRef,
 };
 use crate::pathfinding::{find_path, find_path_avoiding};
 use crate::world::{
@@ -116,7 +116,7 @@ fn colonist_at_task_target(pos: &Position, task: &Task) -> bool {
 
 pub fn colonist_at_task_stand(pos: &Position, task: &Task, path: &Path) -> bool {
     match task.kind {
-        TaskKind::Build => colonist_is_building(pos, task),
+        TaskKind::Build | TaskKind::Deconstruct => colonist_at_labor_site(pos, task),
         TaskKind::Eat | TaskKind::Sleep => {
             if path.index < path.waypoints.len() {
                 return false;
@@ -127,13 +127,21 @@ pub fn colonist_at_task_stand(pos: &Position, task: &Task, path: &Path) -> bool 
     }
 }
 
-/// Build worker is locked in place once adjacent to the construction site.
-fn colonist_is_building(pos: &Position, task: &Task) -> bool {
-    if task.kind != TaskKind::Build {
+/// Build/deconstruct worker is locked in place once adjacent to the site.
+fn colonist_at_labor_site(pos: &Position, task: &Task) -> bool {
+    if !matches!(task.kind, TaskKind::Build | TaskKind::Deconstruct) {
         return false;
     }
     let cell = pos.grid_cell();
     (cell.0 - task.building_x).abs() + (cell.1 - task.building_y).abs() == 1
+}
+
+fn colonist_is_building(pos: &Position, task: &Task) -> bool {
+    task.kind == TaskKind::Build && colonist_at_labor_site(pos, task)
+}
+
+fn colonist_is_deconstructing(pos: &Position, task: &Task) -> bool {
+    task.kind == TaskKind::Deconstruct && colonist_at_labor_site(pos, task)
 }
 
 fn colonist_pins_cell(world: &World, entity: Entity, cell: (i32, i32)) -> bool {
@@ -148,7 +156,9 @@ fn colonist_pins_cell(world: &World, entity: Entity, cell: (i32, i32)) -> bool {
     };
 
     match task.kind {
-        TaskKind::Build => colonist_is_building(pos, task) && pos.grid_cell() == cell,
+        TaskKind::Build | TaskKind::Deconstruct => {
+            colonist_at_labor_site(pos, task) && pos.grid_cell() == cell
+        }
         TaskKind::Eat | TaskKind::Sleep => {
             colonist_at_task_stand(pos, task, path) && pos.grid_cell() == cell
         }
@@ -164,8 +174,8 @@ fn reserved_stands_for_active_tasks(world: &mut World) -> HashSet<(i32, i32)> {
             TaskKind::Eat => {
                 reserved.insert((task.target_x, task.target_y));
             }
-            TaskKind::Build => {
-                if colonist_is_building(pos, task) {
+            TaskKind::Build | TaskKind::Deconstruct => {
+                if colonist_at_labor_site(pos, task) {
                     reserved.insert(pos.grid_cell());
                 } else {
                     reserved.insert((task.target_x, task.target_y));
@@ -177,11 +187,11 @@ fn reserved_stands_for_active_tasks(world: &mut World) -> HashSet<(i32, i32)> {
     reserved
 }
 
-/// Snap build workers on adjacent cells and clear any remaining path to the stand.
-fn lock_building_colonists(world: &mut World) {
+/// Snap labor workers on adjacent cells and clear any remaining path to the stand.
+fn lock_labor_colonists(world: &mut World) {
     let mut q = world.query::<(&mut Position, &Task, &mut Path)>();
     for (mut pos, task, mut path) in q.iter_mut(world) {
-        if !colonist_is_building(&*pos, task) {
+        if !colonist_at_labor_site(&*pos, task) {
             continue;
         }
         let cell = pos.grid_cell();
@@ -357,6 +367,13 @@ pub fn construction_site_at(world: &mut World, x: i32, y: i32) -> Option<Entity>
         .map(|(entity, _, _)| entity)
 }
 
+pub fn deconstruction_site_at(world: &mut World, x: i32, y: i32) -> Option<Entity> {
+    let mut q = world.query::<(Entity, &Position, &DeconstructionSite)>();
+    q.iter(world)
+        .find(|(_, pos, _)| pos.grid_cell() == (x, y))
+        .map(|(entity, _, _)| entity)
+}
+
 pub fn is_valid_build_tile(
     world: &mut World,
     grid: &WorldGrid,
@@ -375,6 +392,9 @@ pub fn is_valid_build_tile(
         return false;
     }
     if construction_site_at(world, x, y).is_some() {
+        return false;
+    }
+    if deconstruction_site_at(world, x, y).is_some() {
         return false;
     }
     true
@@ -417,6 +437,77 @@ pub fn complete_construction(
     let _ = world.despawn(site_entity);
 }
 
+pub fn complete_deconstruction(
+    world: &mut World,
+    grid: &mut WorldGrid,
+    site_entity: Entity,
+    _site: &DeconstructionSite,
+    x: i32,
+    y: i32,
+) {
+    if grid.building_at(x, y).is_some() {
+        grid.remove_building(x, y);
+        if let Some(be) = building_entity_at(world, x, y) {
+            let _ = world.despawn(be);
+        }
+    }
+    let _ = world.despawn(site_entity);
+}
+
+fn is_deconstruction_assignable(
+    world: &mut World,
+    content: &ContentRegistry,
+    building_id: BuildingId,
+    x: i32,
+    y: i32,
+) -> bool {
+    if building_id == content.wall_building {
+        return true;
+    }
+
+    if let Some(site_entity) = construction_site_at(world, x, y) {
+        if let Some(site) = world.get::<ConstructionSite>(site_entity) {
+            if site.reserved_by.is_some() {
+                return false;
+            }
+        }
+        let mut q = world.query::<&Task>();
+        for task in q.iter(world) {
+            if task.kind == TaskKind::Build && task.building_x == x && task.building_y == y {
+                return false;
+            }
+        }
+    }
+
+    if building_id == content.bed_building {
+        if let Some(be) = building_entity_at(world, x, y) {
+            if world
+                .get::<BedOccupancy>(be)
+                .is_some_and(|occ| occ.reserved_by.is_some())
+            {
+                return false;
+            }
+        }
+        let mut q = world.query::<(&Position, &Task)>();
+        for (pos, task) in q.iter(world) {
+            if task.kind == TaskKind::Sleep && pos.grid_cell() == (x, y) {
+                return false;
+            }
+        }
+    }
+
+    if building_id == content.berry_bush_building {
+        let mut q = world.query::<&Task>();
+        for task in q.iter(world) {
+            if task.kind == TaskKind::Eat && task.building_x == x && task.building_y == y {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
 struct PendingAssignment {
     entity: Entity,
     task_kind: TaskKind,
@@ -432,7 +523,7 @@ struct PendingAssignment {
 pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid, content: &ContentRegistry) {
     // Expects `sync_statuses` to have run this tick. Colonists without active need statuses
     // enter idle mode (Build assignment, then wander).
-    preempt_build_for_critical_needs(world, content);
+    preempt_labor_for_critical_needs(world, content);
     release_unsatisfiable_eat_tasks(world, grid, content);
     release_unreachable_eat_tasks(world, grid, content);
 
@@ -481,6 +572,28 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid, content: &ContentR
                 let (gx, gy) = pos.grid_cell();
                 Some((entity, gx, gy))
             })
+            .collect()
+    };
+
+    let open_decon_sites: Vec<(Entity, i32, i32)> = {
+        let candidates: Vec<(Entity, i32, i32, BuildingId)> = {
+            let mut q = world.query::<(Entity, &Position, &DeconstructionSite)>();
+            q.iter(world)
+                .filter_map(|(entity, pos, site)| {
+                    if site.reserved_by.is_some() {
+                        return None;
+                    }
+                    let (gx, gy) = pos.grid_cell();
+                    Some((entity, gx, gy, site.building_id))
+                })
+                .collect()
+        };
+        candidates
+            .into_iter()
+            .filter(|(_, gx, gy, building_id)| {
+                is_deconstruction_assignable(world, content, *building_id, *gx, *gy)
+            })
+            .map(|(entity, gx, gy, _)| (entity, gx, gy))
             .collect()
     };
 
@@ -566,7 +679,7 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid, content: &ContentR
                     if assignment.task_kind == TaskKind::Eat {
                         reserved_stands.insert((assignment.target_x, assignment.target_y));
                     }
-                    if assignment.task_kind == TaskKind::Build {
+                    if matches!(assignment.task_kind, TaskKind::Build | TaskKind::Deconstruct) {
                         reserved_stands.insert((assignment.target_x, assignment.target_y));
                     }
 
@@ -580,12 +693,13 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid, content: &ContentR
             }
         }
 
-        // Idle mode: no active need statuses — build orders, then wander.
-        if let Some((site_entity, (bx, by), (sx, sy))) = nearest_build_assignment(
+        // Idle mode: no active need statuses — build/deconstruct orders, then wander.
+        if let Some((site_entity, task_kind, (bx, by), (sx, sy))) = nearest_job_assignment(
             grid,
             content,
             (gx, gy),
             &open_sites,
+            &open_decon_sites,
             &reserved_sites,
             &occupancy,
             &reserved_stands,
@@ -602,7 +716,7 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid, content: &ContentR
 
                 pending.push(PendingAssignment {
                     entity,
-                    task_kind: TaskKind::Build,
+                    task_kind,
                     building_x: bx,
                     building_y: by,
                     target_x: sx,
@@ -642,8 +756,14 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid, content: &ContentR
             }
         }
         if let Some(site_entity) = assignment.site_entity {
-            if let Some(mut site) = world.get_mut::<ConstructionSite>(site_entity) {
-                site.reserved_by = Some(assignment.entity);
+            if assignment.task_kind == TaskKind::Build {
+                if let Some(mut site) = world.get_mut::<ConstructionSite>(site_entity) {
+                    site.reserved_by = Some(assignment.entity);
+                }
+            } else if assignment.task_kind == TaskKind::Deconstruct {
+                if let Some(mut site) = world.get_mut::<DeconstructionSite>(site_entity) {
+                    site.reserved_by = Some(assignment.entity);
+                }
             }
         }
     }
@@ -656,12 +776,12 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid, content: &ContentR
     }
 }
 
-fn preempt_build_for_critical_needs(world: &mut World, content: &ContentRegistry) {
+fn preempt_labor_for_critical_needs(world: &mut World, content: &ContentRegistry) {
     let preemptions: Vec<Entity> = {
         let mut q = world.query::<(Entity, &Task, Option<&ActiveStatuses>)>();
         q.iter(world)
             .filter_map(|(entity, task, statuses)| {
-                if !matches!(task.kind, TaskKind::Build) {
+                if !matches!(task.kind, TaskKind::Build | TaskKind::Deconstruct) {
                     return None;
                 }
                 if statuses.map(|s| {
@@ -676,7 +796,7 @@ fn preempt_build_for_critical_needs(world: &mut World, content: &ContentRegistry
     };
 
     for entity in preemptions {
-        release_construction_reservation(world, entity);
+        release_labor_reservation(world, entity);
         clear_task(world, entity);
     }
 }
@@ -745,10 +865,15 @@ fn release_stuck_tasks(world: &mut World) -> HashSet<Entity> {
         let mut q = world.query::<(Entity, &Position, &Task, &Path)>();
         q.iter(world)
             .filter_map(|(entity, pos, task, path)| {
-                if !matches!(task.kind, TaskKind::Build | TaskKind::Eat | TaskKind::Sleep) {
+                if !matches!(
+                    task.kind,
+                    TaskKind::Build | TaskKind::Deconstruct | TaskKind::Eat | TaskKind::Sleep
+                ) {
                     return None;
                 }
-                if task.kind == TaskKind::Build && colonist_is_building(pos, task) {
+                if matches!(task.kind, TaskKind::Build | TaskKind::Deconstruct)
+                    && colonist_at_labor_site(pos, task)
+                {
                     return None;
                 }
                 let (gx, gy) = pos.grid_cell();
@@ -766,8 +891,8 @@ fn release_stuck_tasks(world: &mut World) -> HashSet<Entity> {
     let mut prefer_sleep_first = HashSet::new();
 
     for (entity, kind) in stuck {
-        if kind == TaskKind::Build {
-            release_construction_reservation(world, entity);
+        if matches!(kind, TaskKind::Build | TaskKind::Deconstruct) {
+            release_labor_reservation(world, entity);
         }
         if matches!(kind, TaskKind::Eat) {
             prefer_sleep_first.insert(entity);
@@ -821,10 +946,10 @@ fn repath_blocked_colonists(
                     path.clear();
                 }
             }
-            TaskKind::Eat | TaskKind::Build | TaskKind::Sleep => {
-                if task.kind == TaskKind::Build {
+            TaskKind::Eat | TaskKind::Build | TaskKind::Deconstruct | TaskKind::Sleep => {
+                if matches!(task.kind, TaskKind::Build | TaskKind::Deconstruct) {
                     if let Some(pos) = world.get::<Position>(entity) {
-                        if colonist_is_building(pos, &task) {
+                        if colonist_at_labor_site(pos, &task) {
                             if let Some(mut path) = world.get_mut::<Path>(entity) {
                                 path.clear();
                             }
@@ -851,7 +976,7 @@ fn repath_blocked_colonists(
                     } else if task.kind == TaskKind::Sleep {
                         clear_task(world, entity);
                     }
-                    // Build: wait for the stand to free — do not reassign to another cell.
+                    // Build/Deconstruct: wait for the stand to free — do not reassign to another cell.
                     continue;
                 }
 
@@ -882,25 +1007,37 @@ fn repath_blocked_colonists(
     prefer_sleep_first
 }
 
-fn nearest_build_assignment(
+fn nearest_job_assignment(
     grid: &WorldGrid,
     content: &ContentRegistry,
     from: (i32, i32),
-    sites: &[(Entity, i32, i32)],
+    build_sites: &[(Entity, i32, i32)],
+    decon_sites: &[(Entity, i32, i32)],
     reserved: &HashSet<Entity>,
     occupancy: &HashMap<(i32, i32), Entity>,
     reserved_stands: &HashSet<(i32, i32)>,
     self_entity: Entity,
-) -> Option<(Entity, (i32, i32), (i32, i32))> {
+) -> Option<(Entity, TaskKind, (i32, i32), (i32, i32))> {
     let blocked = colonist_blocked_cells(occupancy, self_entity);
-    let mut candidates: Vec<((Entity, i32, i32), i32)> = sites
-        .iter()
-        .filter(|(entity, _, _)| !reserved.contains(entity))
-        .map(|&(entity, sx, sy)| ((entity, sx, sy), (sx - from.0).abs() + (sy - from.1).abs()))
-        .collect();
-    candidates.sort_by_key(|(_, dist)| *dist);
+    let mut candidates: Vec<(Entity, TaskKind, i32, i32, i32)> = Vec::new();
 
-    for ((entity, sx, sy), _) in candidates {
+    for &(entity, sx, sy) in build_sites {
+        if reserved.contains(&entity) {
+            continue;
+        }
+        let dist = (sx - from.0).abs() + (sy - from.1).abs();
+        candidates.push((entity, TaskKind::Build, sx, sy, dist));
+    }
+    for &(entity, sx, sy) in decon_sites {
+        if reserved.contains(&entity) {
+            continue;
+        }
+        let dist = (sx - from.0).abs() + (sy - from.1).abs();
+        candidates.push((entity, TaskKind::Deconstruct, sx, sy, dist));
+    }
+    candidates.sort_by_key(|(_, _, _, _, dist)| *dist);
+
+    for (entity, task_kind, sx, sy, _) in candidates {
         if let Some(stand) = crate::pathfinding::best_adjacent_stand_filtered(
             grid,
             content,
@@ -913,7 +1050,7 @@ fn nearest_build_assignment(
             },
         ) {
             if find_path_avoiding(grid, content, from, stand, &blocked).is_some() {
-                return Some((entity, (sx, sy), stand));
+                return Some((entity, task_kind, (sx, sy), stand));
             }
         }
     }
@@ -1146,7 +1283,7 @@ fn eject_colonists_from_blocks_settle(world: &mut World, grid: &WorldGrid, conte
 
     for (entity, cell) in on_blocked {
         if let (Some(task), Some(pos)) = (world.get::<Task>(entity), world.get::<Position>(entity)) {
-            if colonist_is_building(pos, task) {
+            if colonist_at_labor_site(pos, task) {
                 continue;
             }
         }
@@ -1171,7 +1308,7 @@ pub fn colonist_movement(
     content: &ContentRegistry,
     dt: f32,
 ) {
-    lock_building_colonists(world);
+    lock_labor_colonists(world);
     stabilize_task_stand_holders(world);
 
     let mut remaining = dt;
@@ -1183,7 +1320,7 @@ pub fn colonist_movement(
 
     eject_colonists_from_blocks_settle(world, grid, content);
     resolve_colonist_overlaps(world, grid, content);
-    lock_building_colonists(world);
+    lock_labor_colonists(world);
     stabilize_task_stand_holders(world);
 }
 
@@ -1206,7 +1343,7 @@ fn colonist_movement_substep(
         let mut colonists = world.query::<(Entity, &Position, &Path, Option<&Task>)>();
         for (entity, pos, path, task) in colonists.iter(world) {
             if let Some(task) = task {
-                if colonist_is_building(pos, task) {
+                if colonist_at_labor_site(pos, task) {
                     let cell = pos.grid_cell();
                     hold_build_stands.push((entity, cell.0, cell.1));
                     continue;
@@ -1298,13 +1435,14 @@ pub fn task_execution(
     dt: f32,
 ) {
     apply_build_work(world, grid, content);
+    apply_deconstruct_work(world, grid, content);
 
     let completions: Vec<(Entity, TaskKind, i32, i32, i32, i32)> = {
         let mut colonists = world.query::<(Entity, &Position, &Task, &Path)>();
         colonists
             .iter(world)
             .filter_map(|(entity, pos, task, path)| {
-                if matches!(task.kind, TaskKind::Idle | TaskKind::Build) {
+                if matches!(task.kind, TaskKind::Idle | TaskKind::Build | TaskKind::Deconstruct) {
                     return None;
                 }
                 if path.index < path.waypoints.len() {
@@ -1377,6 +1515,10 @@ pub fn task_execution(
                     if let Some(be) = building_entity {
                         to_despawn.push((be, building_x, building_y));
                     }
+                    if let Some(decon_entity) = deconstruction_site_at(world, building_x, building_y) {
+                        release_deconstruction_site_reservations(world, decon_entity);
+                        let _ = world.despawn(decon_entity);
+                    }
                 }
             }
             TaskKind::Sleep => {
@@ -1442,7 +1584,7 @@ pub fn task_execution(
                     continue;
                 }
             }
-            TaskKind::Idle | TaskKind::Build => {}
+            TaskKind::Idle | TaskKind::Build | TaskKind::Deconstruct => {}
         }
 
         clear_task(world, colonist_entity);
@@ -1502,6 +1644,59 @@ fn apply_build_work(world: &mut World, grid: &mut WorldGrid, content: &ContentRe
     }
 }
 
+fn apply_deconstruct_work(world: &mut World, grid: &mut WorldGrid, _content: &ContentRegistry) {
+    let workers: Vec<(Entity, i32, i32, i32, i32)> = {
+        let mut colonists = world.query::<(Entity, &Position, &Task, &Path)>();
+        colonists
+            .iter(world)
+            .filter_map(|(entity, pos, task, _path)| {
+                if !colonist_is_deconstructing(pos, task) {
+                    return None;
+                }
+                Some((
+                    entity,
+                    pos.grid_cell().0,
+                    pos.grid_cell().1,
+                    task.building_x,
+                    task.building_y,
+                ))
+            })
+            .collect()
+    };
+
+    for (colonist_entity, _gx, _gy, building_x, building_y) in workers {
+        let site_entity = deconstruction_site_at(world, building_x, building_y);
+        let Some(site_entity) = site_entity else {
+            release_labor_reservation(world, colonist_entity);
+            clear_task(world, colonist_entity);
+            continue;
+        };
+
+        let should_complete = {
+            let mut site = match world.get_mut::<DeconstructionSite>(site_entity) {
+                Some(s) => s,
+                None => continue,
+            };
+            site.work_remaining -= BUILD_WORK_PER_TICK;
+            site.work_remaining <= 0.0
+        };
+
+        if should_complete {
+            if let Some(site) = world.get::<DeconstructionSite>(site_entity).copied() {
+                complete_deconstruction(
+                    world,
+                    grid,
+                    site_entity,
+                    &site,
+                    building_x,
+                    building_y,
+                );
+            }
+            clear_task(world, colonist_entity);
+        }
+    }
+}
+
 fn release_construction_reservation(world: &mut World, colonist: Entity) {
     let mut sites = world.query::<&mut ConstructionSite>();
     for mut site in sites.iter_mut(world) {
@@ -1509,6 +1704,28 @@ fn release_construction_reservation(world: &mut World, colonist: Entity) {
             site.reserved_by = None;
         }
     }
+}
+
+fn release_deconstruction_reservation(world: &mut World, colonist: Entity) {
+    let mut sites = world.query::<&mut DeconstructionSite>();
+    for mut site in sites.iter_mut(world) {
+        if site.reserved_by == Some(colonist) {
+            site.reserved_by = None;
+        }
+    }
+}
+
+fn release_deconstruction_site_reservations(world: &mut World, site_entity: Entity) {
+    if let Some(mut site) = world.get_mut::<DeconstructionSite>(site_entity) {
+        if let Some(colonist) = site.reserved_by.take() {
+            clear_task(world, colonist);
+        }
+    }
+}
+
+fn release_labor_reservation(world: &mut World, colonist: Entity) {
+    release_construction_reservation(world, colonist);
+    release_deconstruction_reservation(world, colonist);
 }
 
 fn release_bed_reservation(world: &mut World, colonist: Entity) {
@@ -1524,6 +1741,7 @@ fn clear_task(world: &mut World, colonist: Entity) {
     if let Some(task) = world.get::<Task>(colonist) {
         match task.kind {
             TaskKind::Build => release_construction_reservation(world, colonist),
+            TaskKind::Deconstruct => release_deconstruction_reservation(world, colonist),
             TaskKind::Sleep => {
                 release_bed_reservation(world, colonist);
                 let _ = world.entity_mut(colonist).remove::<SleepingOnBed>();
@@ -3557,5 +3775,261 @@ mod tests {
         let cell_a = world.get::<Position>(a).unwrap().grid_cell();
         let cell_b = world.get::<Position>(b).unwrap().grid_cell();
         assert_ne!(cell_a, cell_b, "colonists must not share a grid cell");
+    }
+
+    #[test]
+    fn deconstruct_instant_cancel_removes_zero_progress_site() {
+        let content = test_content();
+        let mut grid = grass_grid(&content);
+        let mut world = World::new();
+        world.spawn((
+            ConstructionSite {
+                building_id: content.wall_building,
+                work_remaining: content.work_required(content.wall_building),
+                reserved_by: None,
+            },
+            Position { x: 10.0, y: 10.0 },
+        ));
+
+        assert!(construction_site_at(&mut world, 10, 10).is_some());
+        let site_entity = construction_site_at(&mut world, 10, 10).unwrap();
+        let _ = world.despawn(site_entity);
+
+        assert!(construction_site_at(&mut world, 10, 10).is_none());
+        assert!(deconstruction_site_at(&mut world, 10, 10).is_none());
+        assert!(grid.building_at(10, 10).is_none());
+    }
+
+    #[test]
+    fn deconstruct_labor_removes_finished_wall() {
+        let content = test_content();
+        let mut grid = grass_grid(&content);
+        assert!(grid.place_building(&content, 10, 10, content.wall_building));
+
+        let mut world = World::new();
+        world.spawn((
+            crate::components::Building,
+            Position { x: 10.0, y: 10.0 },
+            BuildingKind(content.wall_building),
+        ));
+        world.spawn((
+            DeconstructionSite {
+                building_id: content.wall_building,
+                work_remaining: content.work_to_deconstruct(content.wall_building),
+                reserved_by: None,
+            },
+            Position { x: 10.0, y: 10.0 },
+        ));
+
+        let colonist = world
+            .spawn((
+                Colonist,
+                Position { x: 9.0, y: 10.0 },
+                Needs::new_full(&content),
+                Task {
+                    kind: TaskKind::Deconstruct,
+                    building_x: 10,
+                    building_y: 10,
+                    target_x: 9,
+                    target_y: 10,
+                },
+                Path::default(),
+            ))
+            .id();
+
+        let site_entity = deconstruction_site_at(&mut world, 10, 10).unwrap();
+        if let Some(mut site) = world.get_mut::<DeconstructionSite>(site_entity) {
+            site.reserved_by = Some(colonist);
+        }
+
+        for _ in 0..20 {
+            task_execution(&mut world, &mut grid, &content, 1.0);
+        }
+
+        assert!(grid.building_at(10, 10).is_none());
+        assert!(deconstruction_site_at(&mut world, 10, 10).is_none());
+        assert_eq!(world.get::<Task>(colonist).unwrap().kind, TaskKind::Idle);
+    }
+
+    #[test]
+    fn deconstruct_in_progress_site_replaces_construction_and_releases_builder() {
+        let content = test_content();
+        let grid = grass_grid(&content);
+        let mut world = World::new();
+        let site_entity = world
+            .spawn((
+                ConstructionSite {
+                    building_id: content.wall_building,
+                    work_remaining: 20.0,
+                    reserved_by: None,
+                },
+                Position { x: 10.0, y: 10.0 },
+            ))
+            .id();
+
+        let builder = world
+            .spawn((
+                Colonist,
+                Position { x: 9.0, y: 10.0 },
+                Task {
+                    kind: TaskKind::Build,
+                    building_x: 10,
+                    building_y: 10,
+                    target_x: 9,
+                    target_y: 10,
+                },
+                Path::default(),
+            ))
+            .id();
+
+        if let Some(mut site) = world.get_mut::<ConstructionSite>(site_entity) {
+            site.reserved_by = Some(builder);
+        }
+
+        let _ = world.despawn(site_entity);
+        if let Some(mut task) = world.get_mut::<Task>(builder) {
+            task.kind = TaskKind::Idle;
+        }
+        world.spawn((
+            DeconstructionSite {
+                building_id: content.wall_building,
+                work_remaining: content.work_to_deconstruct(content.wall_building),
+                reserved_by: None,
+            },
+            Position { x: 10.0, y: 10.0 },
+        ));
+
+        assert!(construction_site_at(&mut world, 10, 10).is_none());
+        assert!(deconstruction_site_at(&mut world, 10, 10).is_some());
+        assert_eq!(world.get::<Task>(builder).unwrap().kind, TaskKind::Idle);
+    }
+
+    #[test]
+    fn deconstruct_bed_not_assigned_while_occupied() {
+        let content = test_content();
+        let mut grid = grass_grid(&content);
+        assert!(grid.place_building(&content, 10, 10, content.bed_building));
+
+        let mut world = World::new();
+        let bed = world
+            .spawn((
+                Building,
+                Position { x: 10.0, y: 10.0 },
+                BuildingKind(content.bed_building),
+                BedOccupancy::default(),
+            ))
+            .id();
+
+        world.spawn((
+            DeconstructionSite {
+                building_id: content.bed_building,
+                work_remaining: content.work_to_deconstruct(content.bed_building),
+                reserved_by: None,
+            },
+            Position { x: 10.0, y: 10.0 },
+        ));
+
+        let sleeper = spawn_sleeping_on_bed(&mut world, &content, bed, 10, 10);
+        let _ = sleeper;
+
+        let idle = spawn_colonist_at(&mut world, &content, 5, 10);
+        run_auto_assign(&mut world, &grid, &content);
+
+        assert_eq!(world.get::<Task>(idle).unwrap().kind, TaskKind::Idle);
+
+        if let Some(mut occ) = world.get_mut::<BedOccupancy>(bed) {
+            occ.reserved_by = None;
+        }
+        if let Some(mut task) = world.get_mut::<Task>(sleeper) {
+            task.kind = TaskKind::Idle;
+        }
+        if let Some(mut pos) = world.get_mut::<Position>(sleeper) {
+            pos.x = 11.0;
+            pos.y = 10.0;
+        }
+
+        run_auto_assign(&mut world, &grid, &content);
+        assert_eq!(world.get::<Task>(idle).unwrap().kind, TaskKind::Deconstruct);
+    }
+
+    #[test]
+    fn nearest_job_picks_closer_deconstruct_over_farther_build() {
+        let content = test_content();
+        let grid = grass_grid(&content);
+        let mut world = World::new();
+
+        world.spawn((
+            ConstructionSite {
+                building_id: content.wall_building,
+                work_remaining: 30.0,
+                reserved_by: None,
+            },
+            Position { x: 20.0, y: 10.0 },
+        ));
+        world.spawn((
+            DeconstructionSite {
+                building_id: content.wall_building,
+                work_remaining: 15.0,
+                reserved_by: None,
+            },
+            Position { x: 11.0, y: 10.0 },
+        ));
+
+        let colonist = spawn_colonist_at(&mut world, &content, 10, 10);
+        run_auto_assign(&mut world, &grid, &content);
+
+        let task = world.get::<Task>(colonist).unwrap();
+        assert_eq!(task.kind, TaskKind::Deconstruct);
+        assert_eq!((task.building_x, task.building_y), (11, 10));
+    }
+
+    #[test]
+    fn hungry_colonist_preempts_deconstruct_task() {
+        let content = test_content();
+        let grid = grass_grid(&content);
+        let mut world = World::new();
+
+        world.spawn((
+            DeconstructionSite {
+                building_id: content.wall_building,
+                work_remaining: 15.0,
+                reserved_by: None,
+            },
+            Position { x: 10.0, y: 10.0 },
+        ));
+
+        let colonist = world
+            .spawn((
+                Colonist,
+                Position { x: 9.0, y: 10.0 },
+                Needs::with_values(
+                    &content,
+                    content.need_def(content.food_need).critical_threshold - 1.0,
+                    100.0,
+                ),
+                ActiveStatuses::default(),
+                Task {
+                    kind: TaskKind::Deconstruct,
+                    building_x: 10,
+                    building_y: 10,
+                    target_x: 9,
+                    target_y: 10,
+                },
+                Path::default(),
+            ))
+            .id();
+
+        let site_entity = deconstruction_site_at(&mut world, 10, 10).unwrap();
+        if let Some(mut site) = world.get_mut::<DeconstructionSite>(site_entity) {
+            site.reserved_by = Some(colonist);
+        }
+
+        sync_statuses(&mut world, &content);
+        preempt_labor_for_critical_needs(&mut world, &content);
+
+        assert_ne!(world.get::<Task>(colonist).unwrap().kind, TaskKind::Deconstruct);
+        if let Some(site) = world.get::<DeconstructionSite>(site_entity) {
+            assert!(site.reserved_by.is_none());
+        }
     }
 }

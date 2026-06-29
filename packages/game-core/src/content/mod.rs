@@ -97,6 +97,7 @@ pub struct BuildingDef {
     pub id: String,
     pub label: String,
     pub work_required: f32,
+    pub work_to_deconstruct: f32,
     pub blocks_movement: bool,
     pub blocks_settle: bool,
     pub buildable: bool,
@@ -190,6 +191,8 @@ struct BuildingDefRaw {
     id: String,
     label: String,
     work_required: f32,
+    #[serde(default)]
+    work_to_deconstruct: Option<f32>,
     blocks_movement: bool,
     blocks_settle: bool,
     #[serde(default = "default_true")]
@@ -283,6 +286,7 @@ impl ContentRegistry {
                 id: b.id,
                 label: b.label,
                 work_required: b.work_required,
+                work_to_deconstruct: b.work_to_deconstruct.unwrap_or(b.work_required),
                 blocks_movement: b.blocks_movement,
                 blocks_settle: b.blocks_settle,
                 buildable: b.buildable,
@@ -433,6 +437,10 @@ impl ContentRegistry {
 
     pub fn work_required(&self, id: BuildingId) -> f32 {
         self.building_def(id).work_required
+    }
+
+    pub fn work_to_deconstruct(&self, id: BuildingId) -> f32 {
+        self.building_def(id).work_to_deconstruct
     }
 
     pub fn blocks_movement(&self, id: BuildingId) -> bool {

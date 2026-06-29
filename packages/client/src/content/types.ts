@@ -52,6 +52,7 @@ export interface BuildingDef {
   id: string;
   label: string;
   work_required: number;
+  work_to_deconstruct?: number;
   blocks_movement: boolean;
   blocks_settle: boolean;
   buildable?: boolean;
@@ -69,7 +70,7 @@ export interface ContentPack {
 
 export type TerrainId = string;
 export type BuildingId = string;
-export type TaskKind = 'Idle' | 'Eat' | 'Sleep' | 'Build';
+export type TaskKind = 'Idle' | 'Eat' | 'Sleep' | 'Build' | 'Deconstruct';
 
 export interface TileSnapshot {
   x: number;
@@ -85,6 +86,13 @@ export interface BuildingSnapshot {
 }
 
 export interface ConstructionSiteSnapshot {
+  x: number;
+  y: number;
+  building: BuildingId;
+  progress: number;
+}
+
+export interface DeconstructionSiteSnapshot {
   x: number;
   y: number;
   building: BuildingId;
@@ -108,6 +116,7 @@ export interface StateSnapshot {
   tiles: TileSnapshot[];
   buildings: BuildingSnapshot[];
   construction_sites: ConstructionSiteSnapshot[];
+  deconstruction_sites?: DeconstructionSiteSnapshot[];
   colonists: ColonistSnapshot[];
   paused: boolean;
   speed: number;
@@ -119,6 +128,7 @@ export type OutgoingEvent =
       tiles: TileSnapshot[];
       buildings: BuildingSnapshot[];
       construction_sites: ConstructionSiteSnapshot[];
+      deconstruction_sites?: DeconstructionSiteSnapshot[];
       colonists: ColonistSnapshot[];
       paused: boolean;
       speed: number;
@@ -129,7 +139,10 @@ export type IncomingEvent =
   | { type: 'set_paused'; paused: boolean }
   | { type: 'set_speed'; multiplier: number }
   | { type: 'build'; building: BuildingId; x: number; y: number }
+  | { type: 'deconstruct'; x: number; y: number }
   | { type: 'load_state'; state: StateSnapshot };
+
+export type ToolMode = BuildingId | 'deconstruct' | null;
 
 export type BuildMode = BuildingId | null;
 

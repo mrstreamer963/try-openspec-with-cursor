@@ -7,7 +7,7 @@ import ColonistInfo from './components/ColonistInfo.vue';
 import { GameManager } from './game/GameManager';
 import { PixiRenderer } from './game/PixiRenderer';
 import { buildSaveFile, downloadSaveFile, validateSaveFile } from './game/saveFile';
-import type { BuildMode, ColonistSnapshot, StateSnapshot } from './game/types';
+import type { ColonistSnapshot, StateSnapshot, ToolMode } from './game/types';
 import { SPEED_PRESETS } from './speedPresets';
 
 const canvasMount = ref<HTMLElement | null>(null);
@@ -15,7 +15,7 @@ const loadInput = useTemplateRef<HTMLInputElement>('loadInput');
 const loading = ref(true);
 const paused = ref(false);
 const speed = ref(1);
-const buildMode = ref<BuildMode>(null);
+const toolMode = ref<ToolMode>(null);
 const selectedColonist = ref<ColonistSnapshot | null>(null);
 const latestSnapshot = shallowRef<StateSnapshot | null>(null);
 const statusMessage = ref<string | null>(null);
@@ -90,10 +90,16 @@ onMounted(async () => {
       return;
     }
     selectedColonist.value = null;
-    if (buildMode.value) {
+    if (toolMode.value === 'deconstruct') {
+      gameManager?.sendEvent({
+        type: 'deconstruct',
+        x: click.x,
+        y: click.y,
+      });
+    } else if (toolMode.value) {
       gameManager?.sendEvent({
         type: 'build',
-        building: buildMode.value,
+        building: toolMode.value,
         x: click.x,
         y: click.y,
       });
@@ -180,7 +186,7 @@ async function onLoadFileSelected(event: Event): Promise<void> {
     @change="onLoadFileSelected"
   />
   <div v-if="statusMessage" class="status-toast">{{ statusMessage }}</div>
-  <Toolbar :build-mode="buildMode" @select-mode="(m) => (buildMode = m)" />
+  <Toolbar :tool-mode="toolMode" @select-mode="(m) => (toolMode = m)" />
   <ColonistInfo :colonist="selectedColonist" />
 </template>
 

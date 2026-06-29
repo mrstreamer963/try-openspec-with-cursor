@@ -61,6 +61,7 @@ pub enum TaskKind {
     Eat,
     Sleep,
     Build,
+    Deconstruct,
 }
 
 pub const BUILD_WORK_PER_TICK: f32 = 1.0;
@@ -104,6 +105,13 @@ pub struct Building;
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct ConstructionSite {
+    pub building_id: BuildingId,
+    pub work_remaining: f32,
+    pub reserved_by: Option<Entity>,
+}
+
+#[derive(Component, Clone, Copy, Debug)]
+pub struct DeconstructionSite {
     pub building_id: BuildingId,
     pub work_remaining: f32,
     pub reserved_by: Option<Entity>,
