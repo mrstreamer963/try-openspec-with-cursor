@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, shallowRef, useTemplateRef } from 'vue';
+import { onMounted, onUnmounted, provide, ref, shallowRef, useTemplateRef } from 'vue';
 import LoadingScreen from './components/LoadingScreen.vue';
 import Hud from './components/Hud.vue';
 import Toolbar from './components/Toolbar.vue';
@@ -9,10 +9,17 @@ import { PixiRenderer } from './game/PixiRenderer';
 import { buildSaveFile, downloadSaveFile, validateSaveFile } from './game/saveFile';
 import type { ColonistSnapshot, StateSnapshot, ToolMode } from './game/types';
 import { SPEED_PRESETS } from './speedPresets';
+import { contentPackToJson, loadBaseContent } from './content/loadBaseContent';
+import { contentPackKey } from './content/injection';
+import type { ContentPack } from './content/types';
 
 const canvasMount = ref<HTMLElement | null>(null);
 const loadInput = useTemplateRef<HTMLInputElement>('loadInput');
 const loading = ref(true);
+const loadError = ref<string | null>(null);
+const contentPack = shallowRef<ContentPack | null>(null);
+provide(contentPackKey, contentPack);
+const contentReady = ref(false);
 const paused = ref(false);
 const speed = ref(1);
 const toolMode = ref<ToolMode>(null);
@@ -56,6 +63,20 @@ onMounted(async () => {
   window.addEventListener('keydown', onKeyDown);
   if (!canvasMount.value) return;
 
+  let contentJson: string;
+  let pack: ContentPack;
+  try {
+    pack = await loadBaseContent();
+    contentPack.value = pack;
+    contentReady.value = true;
+    contentJson = contentPackToJson(pack);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    loadError.value = message;
+    loading.value = true;
+    return;
+  }
+
   gameManager = new GameManager();
 
   gameManager.onReady(() => {
@@ -79,9 +100,9 @@ onMounted(async () => {
     }
   });
 
-  gameManager.start();
+  gameManager.start(contentJson);
 
-  renderer = new PixiRenderer(canvasMount.value);
+  renderer = new PixiRenderer(canvasMount.value, pack);
   await renderer.init();
 
   renderer.setOnSceneClick((click) => {
@@ -167,7 +188,7 @@ async function onLoadFileSelected(event: Event): Promise<void> {
 </script>
 
 <template>
-  <LoadingScreen :visible="loading" />
+  <LoadingScreen :visible="loading" :error="loadError" />
   <div ref="canvasMount" class="canvas-host" />
   <Hud
     :paused="paused"
@@ -186,8 +207,8 @@ async function onLoadFileSelected(event: Event): Promise<void> {
     @change="onLoadFileSelected"
   />
   <div v-if="statusMessage" class="status-toast">{{ statusMessage }}</div>
-  <Toolbar :tool-mode="toolMode" @select-mode="(m) => (toolMode = m)" />
-  <ColonistInfo :colonist="selectedColonist" />
+  <Toolbar v-if="contentReady" :tool-mode="toolMode" @select-mode="(m) => (toolMode = m)" />
+  <ColonistInfo v-if="contentReady" :colonist="selectedColonist" />
 </template>
 
 <style scoped>

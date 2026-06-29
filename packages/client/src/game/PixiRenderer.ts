@@ -1,18 +1,8 @@
 import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
-import {
-  buildingColorMap,
-  loadBaseContent,
-  terrainColorMap,
-} from '../content/loadBaseContent';
+import { buildingColorMap, terrainColorMap } from '../content/loadBaseContent';
+import type { ContentPack } from '../content/types';
 import type { ColonistSnapshot, StateSnapshot } from './types';
 import { COLONIST_COLOR, SIM_TICK_MS, TILE_SIZE, WORLD_SIZE } from './types';
-
-const content = loadBaseContent();
-const TERRAIN_COLORS = terrainColorMap(content);
-const BUILDING_COLORS = buildingColorMap(content);
-const BERRIES_PER_BUSH =
-  content.buildings.find((b) => b.id === 'berry_bush')?.on_complete.find((p) => p.type === 'supply')
-    ?.amount ?? 3;
 
 interface ColonistMotion {
   sampleX: number;
@@ -74,8 +64,19 @@ export class PixiRenderer {
   private wheelHandler?: (e: WheelEvent) => void;
   private applyCameraTicker?: () => void;
   private destroyed = false;
+  private readonly terrainColors: Record<string, number>;
+  private readonly buildingColors: Record<string, number>;
+  private readonly berriesPerBush: number;
 
-  constructor(private mount: HTMLElement) {
+  constructor(
+    private mount: HTMLElement,
+    content: ContentPack,
+  ) {
+    this.terrainColors = terrainColorMap(content);
+    this.buildingColors = buildingColorMap(content);
+    this.berriesPerBush =
+      content.buildings.find((b) => b.id === 'berry_bush')?.on_complete.find((p) => p.type === 'supply')
+        ?.amount ?? 3;
     this.app = new Application();
     this.worldContainer = new Container();
     this.terrainLayer = new Container();
@@ -255,7 +256,7 @@ export class PixiRenderer {
     for (const tile of snapshot.tiles) {
       const g = new Graphics();
       g.rect(tile.x * TILE_SIZE, tile.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-      g.fill(TERRAIN_COLORS[tile.terrain] ?? 0x4a5568);
+      g.fill(this.terrainColors[tile.terrain] ?? 0x4a5568);
       this.terrainLayer.addChild(g);
     }
   }
@@ -271,7 +272,7 @@ export class PixiRenderer {
         TILE_SIZE - pad * 2,
         TILE_SIZE - pad * 2,
       );
-      const color = BUILDING_COLORS[site.building] ?? 0x718096;
+      const color = this.buildingColors[site.building] ?? 0x718096;
       const alpha = 0.25 + site.progress * 0.45;
       g.fill({ color, alpha });
       this.buildingsLayer.addChild(g);
@@ -286,10 +287,10 @@ export class PixiRenderer {
         TILE_SIZE - pad * 2,
         TILE_SIZE - pad * 2,
       );
-      let color = BUILDING_COLORS[b.building] ?? 0x718096;
+      let color = this.buildingColors[b.building] ?? 0x718096;
       let alpha = 1;
       if (b.building === 'berry_bush' && b.berries != null) {
-        alpha = 0.45 + (b.berries / BERRIES_PER_BUSH) * 0.55;
+        alpha = 0.45 + (b.berries / this.berriesPerBush) * 0.55;
       }
       g.fill({ color, alpha });
       this.buildingsLayer.addChild(g);

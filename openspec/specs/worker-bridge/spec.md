@@ -7,11 +7,11 @@ WebWorker game loop, postMessage communication between main thread and WASM core
 ## Requirements
 
 ### Requirement: Content pack delivery to WASM
-The worker bridge SHALL load the base content pack YAML (or a pre-parsed JSON equivalent) and pass it to the WASM `Game` constructor when the worker initializes.
+The worker bridge SHALL receive the merged content pack JSON from the main thread (produced by fetching and parsing `content/base/*.yaml` at application startup) and pass it to the WASM `Game` constructor when the worker starts. The worker SHALL NOT load content from compile-time bundled imports or an embedded `pack.json` file.
 
 #### Scenario: Worker init with content
-- **WHEN** the WebWorker starts and instantiates the game core
-- **THEN** the bundled base content payload is provided before the first `tick` call
+- **WHEN** the main thread sends a `start` message with `contentJson` after YAML has been fetched and merged
+- **THEN** the worker instantiates `Game` with that payload before the first `tick` call
 
 #### Scenario: Content load failure blocks game start
 - **WHEN** content validation fails during WASM `Game` construction

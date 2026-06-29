@@ -506,7 +506,8 @@ mod tests {
     use crate::systems::sync_statuses;
 
     fn test_game() -> Game {
-        Game::new(base_content_json()).expect("base content")
+        let json = base_content_json();
+        Game::new(&json).expect("base content")
     }
 
     #[test]

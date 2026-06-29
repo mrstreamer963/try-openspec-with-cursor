@@ -60,10 +60,10 @@ export class GameManager {
     return () => this.errorListeners.delete(listener);
   }
 
-  start(): void {
+  start(contentJson: string): void {
     if (this.started) return;
     this.started = true;
-    this.worker.postMessage({ kind: 'start' } satisfies MainToWorkerMessage);
+    this.worker.postMessage({ kind: 'start', contentJson } satisfies MainToWorkerMessage);
   }
 
   sendEvent(event: IncomingEvent): void {

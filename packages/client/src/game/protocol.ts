@@ -7,7 +7,7 @@ export type WorkerMessage =
 
 export type MainToWorkerMessage =
   | { kind: 'event'; event: IncomingEvent }
-  | { kind: 'start' };
+  | { kind: 'start'; contentJson: string };
 
 export type ParsedOutgoingEvent =
   | { kind: 'snapshot'; data: StateSnapshot }

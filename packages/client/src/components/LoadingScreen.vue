@@ -1,13 +1,15 @@
 <script setup lang="ts">
 defineProps<{
   visible: boolean;
+  error?: string | null;
 }>();
 </script>
 
 <template>
   <div v-if="visible" class="loading">
-    <div class="spinner" />
-    <p>Loading colony simulation…</p>
+    <div v-if="!error" class="spinner" />
+    <p v-if="error" class="error">{{ error }}</p>
+    <p v-else>Loading colony simulation…</p>
   </div>
 </template>
 
@@ -35,5 +37,11 @@ defineProps<{
 }
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+.error {
+  color: #fc8181;
+  max-width: min(90vw, 480px);
+  text-align: center;
+  line-height: 1.4;
 }
 </style>

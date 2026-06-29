@@ -579,12 +579,41 @@ fn parse_status_effect(raw: StatusEffectRaw) -> Result<StatusEffect, ContentErro
     }
 }
 
-pub fn base_content_json() -> &'static str {
-    include_str!("../../../../content/base/pack.json")
+#[cfg(test)]
+fn base_content_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content/base")
 }
 
+#[cfg(test)]
+fn read_yaml_value(name: &str) -> serde_json::Value {
+    use std::fs;
+    let path = base_content_dir().join(name);
+    let raw = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+    let yaml: serde_yaml::Value =
+        serde_yaml::from_str(&raw).unwrap_or_else(|e| panic!("parse {path:?}: {e}"));
+    serde_json::to_value(yaml).expect("yaml to json")
+}
+
+#[cfg(test)]
+pub fn base_content_json() -> String {
+    let needs = read_yaml_value("needs.yaml");
+    let statuses = read_yaml_value("statuses.yaml");
+    let buildings = read_yaml_value("buildings.yaml");
+    let terrain = read_yaml_value("terrain.yaml");
+    let _mod_meta = read_yaml_value("mod.yaml");
+
+    serde_json::json!({
+        "needs": needs["needs"],
+        "statuses": statuses["statuses"],
+        "buildings": buildings["buildings"],
+        "terrain": terrain["terrain"],
+    })
+    .to_string()
+}
+
+#[cfg(test)]
 pub fn base_content() -> ContentRegistry {
-    ContentRegistry::from_json(base_content_json()).expect("base content pack must be valid")
+    ContentRegistry::from_json(&base_content_json()).expect("base content pack must be valid")
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@ import { resolve } from 'path';
 
 export default defineConfig({
   plugins: [vue(), wasm(), topLevelAwait()],
+  publicDir: resolve(__dirname, '../../content'),
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),

@@ -1,16 +1,30 @@
 <script setup lang="ts">
-import { loadBaseContent, needLabel, statusLabel } from '../content/loadBaseContent';
+import { computed, inject } from 'vue';
+import { needLabel, statusLabel } from '../content/loadBaseContent';
+import { contentPackKey } from '../content/injection';
 import type { ColonistSnapshot } from '../game/types';
 
 defineProps<{
   colonist: ColonistSnapshot | null;
 }>();
 
-const content = loadBaseContent();
-const foodLabel = needLabel(content, 'food');
-const sleepLabel = needLabel(content, 'sleep');
-const hungryLabel = statusLabel(content, 'hungry');
-const wantsSleepLabel = statusLabel(content, 'wants_sleep');
+const contentRef = inject(contentPackKey);
+const foodLabel = computed(() => {
+  const content = contentRef?.value;
+  return content ? needLabel(content, 'food') : 'Food';
+});
+const sleepLabel = computed(() => {
+  const content = contentRef?.value;
+  return content ? needLabel(content, 'sleep') : 'Sleep';
+});
+const hungryLabel = computed(() => {
+  const content = contentRef?.value;
+  return content ? statusLabel(content, 'hungry') : 'Hungry';
+});
+const wantsSleepLabel = computed(() => {
+  const content = contentRef?.value;
+  return content ? statusLabel(content, 'wants_sleep') : 'Wants sleep';
+});
 </script>
 
 <template>

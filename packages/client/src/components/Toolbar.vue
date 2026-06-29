@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { buildableBuildings, loadBaseContent } from '../content/loadBaseContent';
+import { computed, inject } from 'vue';
+import { buildableBuildings } from '../content/loadBaseContent';
+import { contentPackKey } from '../content/injection';
 import type { BuildingId, ToolMode } from '../game/types';
 
 defineProps<{
@@ -10,11 +12,15 @@ const emit = defineEmits<{
   selectMode: [mode: ToolMode];
 }>();
 
-const content = loadBaseContent();
-const tools = buildableBuildings(content).map((b) => ({
-  type: b.id,
-  label: b.label,
-}));
+const contentRef = inject(contentPackKey);
+const tools = computed(() => {
+  const content = contentRef?.value;
+  if (!content) return [];
+  return buildableBuildings(content).map((b) => ({
+    type: b.id,
+    label: b.label,
+  }));
+});
 </script>
 
 <template>

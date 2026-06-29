@@ -1,28 +1,47 @@
 import { load as parseYaml } from 'js-yaml';
-import modYaml from '@content/base/mod.yaml?raw';
-import needsYaml from '@content/base/needs.yaml?raw';
-import statusesYaml from '@content/base/statuses.yaml?raw';
-import buildingsYaml from '@content/base/buildings.yaml?raw';
-import terrainYaml from '@content/base/terrain.yaml?raw';
 import type { ContentPack } from './types';
 
-function parseFile<T>(raw: string): T {
-  return parseYaml(raw) as T;
+const BASE_URL = '/base';
+
+async function fetchYaml<T>(filename: string, label: string): Promise<T> {
+  const url = `${BASE_URL}/${filename}`;
+  let response: Response;
+  try {
+    response = await fetch(url);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to fetch ${label} (${url}): ${message}`);
+  }
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch ${label} (${url}): HTTP ${response.status} ${response.statusText}`,
+    );
+  }
+  const raw = await response.text();
+  try {
+    return parseYaml(raw) as T;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to parse ${label} YAML: ${message}`);
+  }
 }
 
 let cached: ContentPack | null = null;
 
 /** Load and merge the base content pack YAML files into a single object. */
-export function loadBaseContent(): ContentPack {
+export async function loadBaseContent(): Promise<ContentPack> {
   if (cached) return cached;
 
-  const needsDoc = parseFile<{ needs: ContentPack['needs'] }>(needsYaml);
-  const statusesDoc = parseFile<{ statuses: ContentPack['statuses'] }>(statusesYaml);
-  const buildingsDoc = parseFile<{ buildings: ContentPack['buildings'] }>(buildingsYaml);
-  const terrainDoc = parseFile<{ terrain: ContentPack['terrain'] }>(terrainYaml);
+  const [needsDoc, statusesDoc, buildingsDoc, terrainDoc, modDoc] = await Promise.all([
+    fetchYaml<{ needs: ContentPack['needs'] }>('needs.yaml', 'needs'),
+    fetchYaml<{ statuses: ContentPack['statuses'] }>('statuses.yaml', 'statuses'),
+    fetchYaml<{ buildings: ContentPack['buildings'] }>('buildings.yaml', 'buildings'),
+    fetchYaml<{ terrain: ContentPack['terrain'] }>('terrain.yaml', 'terrain'),
+    fetchYaml<{ id: string; version: number }>('mod.yaml', 'mod metadata'),
+  ]);
 
   // mod.yaml reserved for future mod metadata (id, version)
-  void parseFile<{ id: string; version: number }>(modYaml);
+  void modDoc;
 
   cached = {
     needs: needsDoc.needs,
