@@ -7,11 +7,11 @@ PixiJS 8 rendering, camera controls, HUD, build toolbar, and colonist info panel
 ## Requirements
 
 ### Requirement: PixiJS tile rendering
-The view layer SHALL render the 50×50 world as colored tiles using PixiJS 8, with distinct colors for Water, Sand, and Grass.
+The view layer SHALL render the 50×50 world as colored tiles using PixiJS 8, with terrain colors loaded from the active content pack terrain definitions.
 
 #### Scenario: Tile colors displayed
 - **WHEN** a state snapshot is received from the worker
-- **THEN** each tile is rendered with its corresponding terrain color on the canvas
+- **THEN** each tile is rendered with the color from its terrain content definition
 
 ### Requirement: Three rendering layers
 The view layer SHALL render content in three PixiJS layers: terrain tiles (bottom), building sprites (middle), and entity sprites (top).
@@ -81,22 +81,26 @@ The view layer SHALL respond to keyboard shortcuts for pause and speed while the
 - **THEN** speed is set to 10× (simulation remains paused until Space or resume is triggered)
 
 ### Requirement: Build toolbar
-The view layer SHALL provide a toolbar with buttons for Wall, Bed, and BerryBush placement modes.
+The view layer SHALL provide a build toolbar with one button per building marked `buildable: true` in the loaded content pack, using each building's `label` (and optional icon) from YAML.
 
 #### Scenario: Select build mode
-- **WHEN** the user clicks the Bed button in the toolbar
-- **THEN** the cursor enters Bed placement mode and subsequent tile clicks send build commands
+- **WHEN** the user clicks the bed button in the toolbar
+- **THEN** the cursor enters `bed` placement mode and subsequent tile clicks send build commands with building id `bed`
 
 #### Scenario: Place building via click
-- **WHEN** the user clicks a tile while in Bed placement mode
-- **THEN** an `IncomingEvent::Build(Bed, x, y)` is sent to the worker
+- **WHEN** the user clicks a tile while in `bed` placement mode
+- **THEN** an `IncomingEvent::Build` with building id `bed` and tile coordinates is sent to the worker
+
+#### Scenario: Toolbar reflects content pack
+- **WHEN** the base content pack is loaded
+- **THEN** the toolbar shows Wall, Bed, and Berry Bush buttons with labels from YAML definitions
 
 ### Requirement: Construction site rendering
-The view layer SHALL render pending construction sites distinctly from completed buildings so the player can see work in progress.
+The view layer SHALL render pending construction sites distinctly from completed buildings. Ghost sprites SHALL use colors from the target building's content definition.
 
 #### Scenario: Ghost sprite for construction site
 - **WHEN** a snapshot contains a construction site at a tile
-- **THEN** a semi-transparent ghost sprite for the target building type is drawn at that tile
+- **THEN** a semi-transparent ghost sprite using the target building's definition color is drawn at that tile
 
 #### Scenario: Progress indication
 - **WHEN** a construction site has partial progress
@@ -129,7 +133,7 @@ The view layer SHALL detect colonist clicks by distance from the click point to 
 - **THEN** the colonist info panel opens for that colonist
 
 ### Requirement: Colonist info panel
-The view layer SHALL display an info panel when the user clicks on a colonist, showing the colonist's display name, numeric id, needs, current task, and position. Position SHALL display the colonist's grid cell (floored coordinates). For each need (Food and Sleep), the panel SHALL show the numeric value, a progress bar, and a critical status label when that need is below the simulation threshold.
+The view layer SHALL display an info panel when the user clicks on a colonist, showing the colonist's display name, numeric id, needs (with labels from content definitions), current task, and position. For each need, the panel SHALL show the numeric value, a progress bar scaled to that need's `max`, and a critical status label from the active status definition when applicable.
 
 #### Scenario: Open info panel
 - **WHEN** the user clicks on a colonist sprite
@@ -137,11 +141,11 @@ The view layer SHALL display an info panel when the user clicks on a colonist, s
 
 #### Scenario: Critical need status visible
 - **WHEN** the user opens the info panel for a colonist whose snapshot has `hungry: true`
-- **THEN** the Food row displays a visible "Hungry" status label in addition to the numeric value and bar
+- **THEN** the food row displays the `hungry` status label from YAML in addition to the numeric value and bar
 
 #### Scenario: Sleep need status visible
 - **WHEN** the user opens the info panel for a colonist whose snapshot has `wants_sleep: true`
-- **THEN** the Sleep row displays a visible "Wants sleep" status label in addition to the numeric value and bar
+- **THEN** the sleep row displays the `wants_sleep` status label from YAML in addition to the numeric value and bar
 
 #### Scenario: Satisfied needs show no critical label
 - **WHEN** the user opens the info panel for a colonist whose snapshot has `hungry: false` and `wants_sleep: false`

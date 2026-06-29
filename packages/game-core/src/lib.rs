@@ -1,6 +1,7 @@
 use wasm_bindgen::prelude::*;
 
 pub mod components;
+pub mod content;
 pub mod events;
 pub mod game;
 pub mod pathfinding;

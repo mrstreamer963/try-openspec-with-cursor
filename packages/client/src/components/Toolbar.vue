@@ -1,19 +1,20 @@
 <script setup lang="ts">
-import type { BuildMode, BuildingType } from '../game/types';
+import { buildableBuildings, loadBaseContent } from '../content/loadBaseContent';
+import type { BuildMode, BuildingId } from '../game/types';
 
 defineProps<{
   buildMode: BuildMode;
 }>();
 
 const emit = defineEmits<{
-  selectMode: [mode: BuildingType | null];
+  selectMode: [mode: BuildingId | null];
 }>();
 
-const tools: { type: BuildingType; label: string }[] = [
-  { type: 'Wall', label: '🧱 Wall' },
-  { type: 'Bed', label: '🛏 Bed' },
-  { type: 'BerryBush', label: '🫐 Berry Bush' },
-];
+const content = loadBaseContent();
+const tools = buildableBuildings(content).map((b) => ({
+  type: b.id,
+  label: b.label,
+}));
 </script>
 
 <template>

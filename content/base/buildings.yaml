@@ -1,0 +1,48 @@
+buildings:
+  - id: wall
+    label: "🧱 Wall"
+    work_required: 30
+    blocks_movement: true
+    blocks_settle: false
+    buildable: true
+    color: 0x718096
+    on_complete: []
+    interactions: []
+  - id: bed
+    label: "🛏 Bed"
+    work_required: 50
+    blocks_movement: false
+    blocks_settle: false
+    buildable: true
+    color: 0x9f7aea
+    on_complete:
+      - type: reservation
+        kind: single_occupant
+    interactions:
+      - mode: on_tile
+        duration_sec: 2.0
+        effects:
+          - type: restore_need
+            need: sleep
+            amount: 100
+  - id: berry_bush
+    label: "🫐 Berry Bush"
+    work_required: 40
+    blocks_movement: false
+    blocks_settle: true
+    buildable: true
+    color: 0xe53e3e
+    on_complete:
+      - type: supply
+        resource: berries
+        amount: 3
+    interactions:
+      - mode: adjacent
+        duration_sec: 0
+        effects:
+          - type: consume_supply
+            resource: berries
+            amount: 1
+          - type: restore_need
+            need: food
+            amount: 100

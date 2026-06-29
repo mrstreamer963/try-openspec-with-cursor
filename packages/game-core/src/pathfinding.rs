@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 
+use crate::content::ContentRegistry;
 use crate::world::WorldGrid;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -40,14 +41,16 @@ impl PartialOrd for Scored {
 
 pub fn find_path(
     grid: &WorldGrid,
+    content: &ContentRegistry,
     start: (i32, i32),
     goal: (i32, i32),
 ) -> Option<Vec<(i32, i32)>> {
-    find_path_avoiding(grid, start, goal, &[])
+    find_path_avoiding(grid, content, start, goal, &[])
 }
 
 pub fn find_path_avoiding(
     grid: &WorldGrid,
+    content: &ContentRegistry,
     start: (i32, i32),
     goal: (i32, i32),
     blocked: &[(i32, i32)],
@@ -55,7 +58,7 @@ pub fn find_path_avoiding(
     if start == goal {
         return Some(vec![goal]);
     }
-    if !grid.is_walkable(goal.0, goal.1) {
+    if !grid.is_walkable(content, goal.0, goal.1) {
         return None;
     }
 
@@ -99,7 +102,9 @@ pub fn find_path_avoiding(
                 x: current.x + dx,
                 y: current.y + dy,
             };
-            if !grid.is_walkable(neighbor.x, neighbor.y) || is_blocked(neighbor.x, neighbor.y) {
+            if !grid.is_walkable(content, neighbor.x, neighbor.y)
+                || is_blocked(neighbor.x, neighbor.y)
+            {
                 continue;
             }
 
@@ -132,15 +137,17 @@ const ORTHOGONAL_DIRS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 /// Returns the orthogonally adjacent walkable cell reachable from `from` with the shortest path.
 pub fn best_adjacent_stand(
     grid: &WorldGrid,
+    content: &ContentRegistry,
     building: (i32, i32),
     from: (i32, i32),
 ) -> Option<(i32, i32)> {
-    best_adjacent_stand_filtered(grid, building, from, |_| true)
+    best_adjacent_stand_filtered(grid, content, building, from, |_| true)
 }
 
 /// Like `best_adjacent_stand`, but skips stands for which `is_available` returns false.
 pub fn best_adjacent_stand_filtered<F>(
     grid: &WorldGrid,
+    content: &ContentRegistry,
     building: (i32, i32),
     from: (i32, i32),
     mut is_available: F,
@@ -152,13 +159,13 @@ where
 
     for (dx, dy) in ORTHOGONAL_DIRS {
         let stand = (building.0 + dx, building.1 + dy);
-        if !grid.is_walkable(stand.0, stand.1) {
+        if !grid.is_walkable(content, stand.0, stand.1) {
             continue;
         }
         if !is_available(stand) {
             continue;
         }
-        if let Some(path) = find_path(grid, from, stand) {
+        if let Some(path) = find_path(grid, content, from, stand) {
             let len = path.len();
             if best.map(|(_, best_len)| len < best_len).unwrap_or(true) {
                 best = Some((stand, len));

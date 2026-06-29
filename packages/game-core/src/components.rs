@@ -1,6 +1,9 @@
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::Entity;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+
+use crate::content::{BuildingId, ContentRegistry, NeedId, StatusId};
 
 #[derive(Component, Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Position {
@@ -14,81 +17,43 @@ impl Position {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum TerrainType {
-    Water,
-    Sand,
-    Grass,
-}
-
-impl TerrainType {
-    pub fn walkable(self) -> bool {
-        !matches!(self, TerrainType::Water)
-    }
-}
-
-#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum BuildingType {
-    Wall,
-    Bed,
-    BerryBush,
-}
-
-impl BuildingType {
-    pub fn blocks_movement(self) -> bool {
-        matches!(self, BuildingType::Wall)
-    }
-
-    pub fn satisfies_need(self) -> Option<NeedKind> {
-        match self {
-            BuildingType::Bed => Some(NeedKind::Sleep),
-            BuildingType::BerryBush => Some(NeedKind::Food),
-            BuildingType::Wall => None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum NeedKind {
-    Food,
-    Sleep,
-}
-
-#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct Needs {
-    pub food: f32,
-    pub sleep: f32,
-}
+#[derive(Component, Clone, Debug, Serialize, Deserialize)]
+pub struct Needs(pub HashMap<NeedId, f32>);
 
 impl Needs {
-    pub fn new_full() -> Self {
-        Self {
-            food: 100.0,
-            sleep: 100.0,
+    pub fn new_full(content: &ContentRegistry) -> Self {
+        let mut map = HashMap::new();
+        for (idx, need) in content.needs.iter().enumerate() {
+            map.insert(NeedId(idx as u8), need.max);
         }
+        Needs(map)
     }
 
-    pub fn get(&self, kind: NeedKind) -> f32 {
-        match kind {
-            NeedKind::Food => self.food,
-            NeedKind::Sleep => self.sleep,
-        }
+    pub fn with_values(content: &ContentRegistry, food: f32, sleep: f32) -> Self {
+        let mut needs = Self::new_full(content);
+        needs.set(content.food_need, food);
+        needs.set(content.sleep_need, sleep);
+        needs
     }
 
-    pub fn set(&mut self, kind: NeedKind, value: f32) {
-        let v = value.clamp(0.0, 100.0);
-        match kind {
-            NeedKind::Food => self.food = v,
-            NeedKind::Sleep => self.sleep = v,
-        }
+    pub fn get(&self, id: NeedId) -> f32 {
+        self.0.get(&id).copied().unwrap_or(0.0)
+    }
+
+    pub fn set(&mut self, id: NeedId, value: f32) {
+        let max = 100.0;
+        self.0.insert(id, value.clamp(0.0, max));
     }
 }
 
-#[derive(Component, Clone, Copy, Debug, Default)]
-pub struct Hungry;
+#[derive(Component, Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ActiveStatuses(pub HashSet<StatusId>);
 
-#[derive(Component, Clone, Copy, Debug, Default)]
-pub struct WantsSleep;
+impl ActiveStatuses {
+    pub fn has(&self, id: StatusId) -> bool {
+        self.0.contains(&id)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskKind {
@@ -99,14 +64,6 @@ pub enum TaskKind {
 }
 
 pub const BUILD_WORK_PER_TICK: f32 = 1.0;
-
-pub fn work_required_for(building: BuildingType) -> f32 {
-    match building {
-        BuildingType::Wall => 30.0,
-        BuildingType::Bed => 50.0,
-        BuildingType::BerryBush => 40.0,
-    }
-}
 
 #[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Task {
@@ -147,7 +104,7 @@ pub struct Building;
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct ConstructionSite {
-    pub building_type: BuildingType,
+    pub building_id: BuildingId,
     pub work_remaining: f32,
     pub reserved_by: Option<Entity>,
 }
@@ -173,6 +130,9 @@ impl BerrySupply {
         Self { remaining }
     }
 }
+
+#[derive(Component, Clone, Copy, Debug)]
+pub struct BuildingKind(pub BuildingId);
 
 #[derive(Component, Clone, Debug, Default)]
 pub struct Path {

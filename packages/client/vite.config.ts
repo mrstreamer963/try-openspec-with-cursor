@@ -9,6 +9,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),
+      '@content': resolve(__dirname, '../../content'),
     },
   },
   worker: {

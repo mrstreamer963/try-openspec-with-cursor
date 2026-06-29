@@ -9,15 +9,17 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "js-yaml": "^5.2.0",
     "pixi.js": "^8.9.2",
     "vue": "^3.5.13"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@vitejs/plugin-vue": "^6.0.7",
     "typescript": "^6.0.3",
     "vite": "^8.1.0",
-    "vite-plugin-wasm": "^3.4.1",
     "vite-plugin-top-level-await": "^1.5.0",
+    "vite-plugin-wasm": "^3.4.1",
     "vue-tsc": "^3.3.5"
   }
 }

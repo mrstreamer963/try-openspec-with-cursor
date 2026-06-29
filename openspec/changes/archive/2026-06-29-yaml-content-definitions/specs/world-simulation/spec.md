@@ -1,21 +1,4 @@
-# World Simulation
-
-## Purpose
-
-50×50 tile world generation, terrain types, and placeable buildings.
-
-## Requirements
-
-### Requirement: 50×50 tile world
-The simulation SHALL generate a fixed 50×50 grid world at initialization.
-
-#### Scenario: World dimensions
-- **WHEN** the game starts
-- **THEN** the world contains exactly 2500 tiles arranged in a 50-column by 50-row grid
-
-#### Scenario: Deterministic generation
-- **WHEN** the game is initialized with the same seed twice
-- **THEN** both worlds produce identical tile layouts
+## MODIFIED Requirements
 
 ### Requirement: Terrain types
 Each tile SHALL have a terrain type identified by a content id from the loaded terrain definitions. The base content pack SHALL define `water`, `sand`, and `grass`. Walkability SHALL be determined by each terrain definition's `walkable` field.
@@ -51,34 +34,12 @@ The simulation SHALL support placing buildings defined in the loaded content pac
 - **WHEN** a colonist interacts with a completed `bed` while standing on the bed tile and holding the bed reservation
 - **THEN** the colonist's sleep need increases per the bed interaction definition
 
-### Requirement: Resource-free construction
-Building placement SHALL NOT require any resource cost in v1.
-
-#### Scenario: Unlimited building
-- **WHEN** the player places multiple beds in succession
-- **THEN** each construction order is created without checking or deducting resources
-
 ### Requirement: Finite berry supply
 Each newly completed `berry_bush` SHALL start with berry supply equal to the amount configured in the building definition's `on_complete` supply primitive. The base pack value SHALL be 3.
 
 #### Scenario: New bush berry count
 - **WHEN** a `berry_bush` construction order completes
 - **THEN** the finished bush has exactly the configured starting berry count from YAML
-
-### Requirement: Construction orders from build commands
-When the host sends a build command for a valid tile, the simulation SHALL create a construction order at that tile instead of an instant finished building.
-
-#### Scenario: Valid construction order
-- **WHEN** the host sends a build command for a Wall at a walkable empty tile with no pending construction
-- **THEN** a construction order for a Wall is created at that tile
-
-#### Scenario: Reject duplicate construction order
-- **WHEN** the host sends a build command at a tile that already has a pending construction order
-- **THEN** the command is rejected and the existing order is unchanged
-
-#### Scenario: Reject build on occupied tile
-- **WHEN** the host sends a build command at a tile that already has a finished building
-- **THEN** the command is rejected
 
 ### Requirement: Construction completion
 When a construction order's remaining work reaches zero, the simulation SHALL replace it with a finished building on the world grid using the building definition's `work_required` and `on_complete` primitives.

@@ -25,19 +25,19 @@ Each colonist SHALL have a unique display name assigned at spawn from a fixed na
 - **THEN** each colonist entry includes its display name alongside its numeric id
 
 ### Requirement: Colonist needs
-Each colonist SHALL have two needs: Food and Sleep, each represented as a value from 0 (critical) to 100 (satisfied).
+Each colonist SHALL have one floating-point value per need defined in the loaded content pack. The base content pack SHALL define `food` and `sleep`, each from 0 (critical) to the need's configured `max` (default 100).
 
 #### Scenario: Needs decay over time
 - **WHEN** the simulation ticks while a colonist is idle
-- **THEN** both Food and Sleep values decrease at a configurable rate
+- **THEN** each need value decreases at the `decay_per_sec` rate from its YAML definition
 
 #### Scenario: Critical need threshold
-- **WHEN** a colonist's Food or Sleep value drops below a defined threshold (e.g., 30)
-- **THEN** the colonist is flagged as needing that resource
+- **WHEN** a colonist's need value drops below that need's `critical_threshold` from YAML
+- **THEN** the colonist receives the status(es) whose `apply_when` condition matches that need
 
 #### Scenario: Need status in snapshot
 - **WHEN** a state snapshot is built
-- **THEN** each colonist entry includes `hungry: true` when Food is below the critical threshold and `wants_sleep: true` when Sleep is below the critical threshold; otherwise the corresponding flag is `false`
+- **THEN** each colonist entry includes `hungry: true` when the `hungry` status is active and `wants_sleep: true` when the `wants_sleep` status is active; otherwise the corresponding flag is `false`
 
 ### Requirement: Float world position
 Each colonist SHALL have a world position expressed as floating-point coordinates in tile units, where integer values align to tile centers (e.g. cell `(5, 7)` is world position `(5.0, 7.0)`).
@@ -96,30 +96,30 @@ Colonists MAY pass through each other while moving between grid cells. Pathfindi
 - **THEN** only terrain and building walkability affect the path, not colonist positions
 
 ### Requirement: Automatic task assignment
-When a colonist's need drops below the critical threshold, the simulation SHALL automatically assign a task to satisfy that need. Pathfinding SHALL use the colonist's current grid cell, derived by flooring world coordinates. When multiple needs are below the threshold, the simulation SHALL try needs in priority order (Food, then Sleep) and assign the first need for which a satisfiable target and valid path exist.
+When a colonist has an active status that assigns task priority via YAML effects, the simulation SHALL automatically assign tasks to satisfy the linked need. Pathfinding SHALL use the colonist's current grid cell, derived by flooring world coordinates. When multiple critical statuses apply, the simulation SHALL use status effect priorities from the content pack (base pack: food before sleep) and assign the first satisfiable task.
 
 #### Scenario: Auto-assign eat task
-- **WHEN** a colonist's Food need drops below the threshold and a completed BerryBush with berries remaining exists with at least one adjacent walkable stand tile
-- **THEN** the colonist is assigned an Eat task targeting the nearest such BerryBush, with path destination on an adjacent stand tile
+- **WHEN** a colonist has the `hungry` status and a completed `berry_bush` with berries exists with at least one adjacent walkable stand tile
+- **THEN** the colonist is assigned an Eat task targeting the nearest such bush per the berry bush interaction definition
 
 #### Scenario: Auto-assign sleep task
-- **WHEN** a colonist's Sleep need drops below the threshold and an unoccupied Bed exists
-- **THEN** the colonist is assigned a Sleep task with path destination on the Bed tile, and the bed is reserved for that colonist
+- **WHEN** a colonist has the `wants_sleep` status and an unoccupied `bed` exists
+- **THEN** the colonist is assigned a Sleep task with path destination on the bed tile, and the bed is reserved for that colonist
 
 #### Scenario: Food priority when both needs critical
-- **WHEN** a colonist's Food and Sleep needs are both below the threshold and both a satisfiable BerryBush and an unoccupied Bed exist
-- **THEN** the colonist is assigned an Eat task (Food takes priority over Sleep)
+- **WHEN** a colonist has both `hungry` and `wants_sleep` active and both a satisfiable `berry_bush` and an unoccupied `bed` exist
+- **THEN** the colonist is assigned an Eat task (food priority per base pack status effect ordering)
 
 #### Scenario: Fallback to sleep when food unavailable
-- **WHEN** a colonist's Food and Sleep needs are both below the threshold, no satisfiable BerryBush exists, and an unoccupied Bed exists with a valid path
-- **THEN** the colonist is assigned a Sleep task targeting the nearest such Bed and the bed is reserved for that colonist
+- **WHEN** a colonist has both critical statuses, no satisfiable `berry_bush` exists, and an unoccupied `bed` exists with a valid path
+- **THEN** the colonist is assigned a Sleep task targeting the nearest such bed
 
 #### Scenario: Fallback to eat when sleep unavailable
-- **WHEN** a colonist's Food and Sleep needs are both below the threshold, no satisfiable Bed exists, and a BerryBush with berries and a valid eat stand path exists
-- **THEN** the colonist is assigned an Eat task targeting the nearest such BerryBush
+- **WHEN** a colonist has both critical statuses, no satisfiable `bed` exists, and a `berry_bush` with berries and a valid eat stand path exists
+- **THEN** the colonist is assigned an Eat task targeting the nearest such bush
 
 #### Scenario: No need task when nothing satisfiable
-- **WHEN** a colonist has one or more needs below the threshold but no satisfiable target and valid path exist for any critical need
+- **WHEN** a colonist has one or more active critical statuses but no satisfiable target and valid path exist
 - **THEN** the colonist remains idle with no Eat or Sleep task assigned and the simulation assigns idle wander movement if the colonist has no remaining path waypoints
 
 #### Scenario: Need assignment replaces wander path
@@ -159,7 +159,7 @@ When a colonist is idle with no Eat, Sleep, or Build assignment and no active pa
 
 #### Scenario: Wander avoids bush destination
 - **WHEN** selecting a wander destination
-- **THEN** the simulation does not select a BerryBush tile as the wander target
+- **THEN** the simulation does not select a tile occupied by a building with `blocks_settle: true`
 
 #### Scenario: Wander uses pathfinding
 - **WHEN** a wander destination is selected
@@ -219,18 +219,18 @@ Colonists SHALL use A* pathfinding to navigate to their task destination across 
 - **THEN** the task is cancelled and the colonist returns to idle
 
 ### Requirement: Task execution
-When a colonist reaches its task destination, the simulation SHALL execute the task interaction and restore the relevant need. Arrival SHALL be determined when the path is complete and the colonist's floored grid cell matches the task target cell.
+When a colonist reaches its task destination, the simulation SHALL execute the interaction primitives defined on the target building in YAML. Arrival SHALL be determined when the path is complete and the colonist's floored grid cell matches the task target cell.
 
 #### Scenario: Complete eat task
-- **WHEN** a colonist with an Eat task arrives at its stand tile orthogonally adjacent to a BerryBush with berries remaining
-- **THEN** the colonist's Food need is restored, one berry is consumed, and the task is cleared
+- **WHEN** a colonist with an Eat task arrives at its stand tile orthogonally adjacent to a `berry_bush` with berries remaining
+- **THEN** the colonist's food need is restored per the interaction definition, one berry is consumed, and the task is cleared
 
 #### Scenario: Complete sleep task
-- **WHEN** a colonist with a Sleep task arrives at a Bed tile reserved for that colonist
-- **THEN** the colonist rests on the bed tile for `SLEEP_ON_BED_SEC` seconds, then Sleep need is restored, the bed reservation is released, and the task is cleared
+- **WHEN** a colonist with a Sleep task arrives at a `bed` tile reserved for that colonist
+- **THEN** the colonist rests for the duration specified in the bed interaction definition, then sleep need is restored, the bed reservation is released, and the task is cleared
 
 #### Scenario: Resting on bed tile
-- **WHEN** a colonist is in the resting period after arriving on a reserved Bed tile
+- **WHEN** a colonist is in the resting period after arriving on a reserved bed tile
 - **THEN** the colonist remains on the bed tile with task kind Sleep until resting completes
 
 #### Scenario: Vacate bed tile after sleep
@@ -317,16 +317,16 @@ When a colonist has an active path and its next waypoint cell is occupied by ano
 - **THEN** the Build task is unchanged and the colonist waits until the stand is free
 
 ### Requirement: Berry bush pass-through without settling
-Colonists SHALL be able to traverse BerryBush tiles during movement, but SHALL NOT treat a BerryBush tile as a valid settled cell or movement waypoint terminus.
+Colonists SHALL be able to traverse tiles occupied by buildings with `blocks_settle: true` during movement, but SHALL NOT treat such tiles as valid settled cells or movement waypoint termini.
 
 #### Scenario: Bush waypoint skipped during movement
-- **WHEN** a colonist's next path waypoint is a BerryBush tile
+- **WHEN** a colonist's next path waypoint is a `berry_bush` tile
 - **THEN** the colonist does not snap to that tile and advances to the following waypoint while continuing movement
 
 #### Scenario: Colonist ejected from bush cell
-- **WHEN** a colonist's settled grid cell is a BerryBush tile after movement
+- **WHEN** a colonist's settled grid cell is a `berry_bush` tile after movement
 - **THEN** the simulation moves the colonist to a nearby settleable cell if one exists
 
 #### Scenario: Eat stand not on bush
 - **WHEN** assigning an Eat or Build stand tile
-- **THEN** the simulation does not select a BerryBush tile as the stand
+- **THEN** the simulation does not select a tile with `blocks_settle: true` as the stand

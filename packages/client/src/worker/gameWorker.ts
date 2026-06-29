@@ -7,6 +7,7 @@ import {
   type WorkerMessage,
 } from '../game/protocol';
 import type { IncomingEvent } from '../game/types';
+import { contentPackToJson, loadBaseContent } from '../content/loadBaseContent';
 
 const TICK_MS = 50;
 const BASE_DT = 0.05;
@@ -18,7 +19,22 @@ let speed = 1;
 
 async function initGame(): Promise<void> {
   await init(wasmUrl);
-  game = new Game();
+  let contentJson: string;
+  try {
+    contentJson = contentPackToJson(loadBaseContent());
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    postMessage({ kind: 'error', message: `Content init failed: ${message}` } satisfies WorkerMessage);
+    throw err;
+  }
+
+  try {
+    game = new Game(contentJson);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    postMessage({ kind: 'error', message: `Game init failed: ${message}` } satisfies WorkerMessage);
+    throw err;
+  }
 }
 
 function startLoop(): void {

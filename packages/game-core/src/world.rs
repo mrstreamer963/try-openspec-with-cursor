@@ -1,13 +1,14 @@
 use bevy_ecs::prelude::*;
 
-use crate::components::{BuildingType, TerrainType};
+use crate::content::{ContentRegistry, TerrainId};
+use crate::content::BuildingId;
 
 pub const WORLD_SIZE: i32 = 50;
 
 #[derive(Resource, Clone)]
 pub struct WorldGrid {
-    pub terrain: Vec<TerrainType>,
-    pub buildings: Vec<Option<BuildingType>>,
+    pub terrain: Vec<TerrainId>,
+    pub buildings: Vec<Option<BuildingId>>,
     pub seed: u32,
 }
 
@@ -19,18 +20,18 @@ impl WorldGrid {
         Some((y * WORLD_SIZE + x) as usize)
     }
 
-    pub fn terrain_at(&self, x: i32, y: i32) -> Option<TerrainType> {
+    pub fn terrain_at(&self, x: i32, y: i32) -> Option<TerrainId> {
         Self::index(x, y).map(|i| self.terrain[i])
     }
 
-    pub fn building_at(&self, x: i32, y: i32) -> Option<BuildingType> {
+    pub fn building_at(&self, x: i32, y: i32) -> Option<BuildingId> {
         Self::index(x, y).and_then(|i| self.buildings[i])
     }
 
-    pub fn is_walkable(&self, x: i32, y: i32) -> bool {
+    pub fn is_walkable(&self, content: &ContentRegistry, x: i32, y: i32) -> bool {
         match self.terrain_at(x, y) {
-            Some(t) if t.walkable() => match self.building_at(x, y) {
-                Some(b) => !b.blocks_movement(),
+            Some(t) if content.terrain_def(t).walkable => match self.building_at(x, y) {
+                Some(b) => !content.blocks_movement(b),
                 None => true,
             },
             _ => false,
@@ -47,8 +48,14 @@ impl WorldGrid {
         false
     }
 
-    pub fn place_building(&mut self, x: i32, y: i32, building: BuildingType) -> bool {
-        if !self.is_walkable(x, y) {
+    pub fn place_building(
+        &mut self,
+        content: &ContentRegistry,
+        x: i32,
+        y: i32,
+        building: BuildingId,
+    ) -> bool {
+        if !self.is_walkable(content, x, y) {
             return false;
         }
         if self.building_at(x, y).is_some() {
@@ -63,12 +70,12 @@ impl WorldGrid {
     }
 }
 
-pub fn generate_world(seed: u32) -> WorldGrid {
+pub fn generate_world(seed: u32, content: &ContentRegistry) -> WorldGrid {
     let len = (WORLD_SIZE * WORLD_SIZE) as usize;
     let mut terrain = Vec::with_capacity(len);
     for y in 0..WORLD_SIZE {
         for x in 0..WORLD_SIZE {
-            terrain.push(terrain_at(x, y, seed));
+            terrain.push(terrain_at(x, y, seed, content));
         }
     }
     WorldGrid {
@@ -78,18 +85,18 @@ pub fn generate_world(seed: u32) -> WorldGrid {
     }
 }
 
-fn terrain_at(x: i32, y: i32, seed: u32) -> TerrainType {
+fn terrain_at(x: i32, y: i32, seed: u32, content: &ContentRegistry) -> TerrainId {
     let nx = x as f32 / WORLD_SIZE as f32;
     let ny = y as f32 / WORLD_SIZE as f32;
     let h = hash_noise(x, y, seed);
     let dist = ((nx - 0.5).powi(2) + (ny - 0.5).powi(2)).sqrt();
 
     if dist > 0.42 || h < 0.12 {
-        TerrainType::Water
+        content.water_terrain
     } else if h < 0.28 {
-        TerrainType::Sand
+        content.sand_terrain
     } else {
-        TerrainType::Grass
+        content.grass_terrain
     }
 }
 
@@ -103,11 +110,6 @@ fn hash_noise(x: i32, y: i32, seed: u32) -> f32 {
     (n & 0xFFFF) as f32 / 65535.0
 }
 
-pub const BERRIES_PER_BUSH: u8 = 3;
-pub const NEED_THRESHOLD: f32 = 30.0;
-pub const NEED_RESTORE: f32 = 100.0;
-pub const FOOD_DECAY_PER_SEC: f32 = 2.0;
-pub const SLEEP_DECAY_PER_SEC: f32 = 1.5;
 pub const MOVE_SPEED: f32 = 4.0;
 /// Movement is integrated in fixed substeps so speed multipliers do not overshoot tiles.
 pub const MOVEMENT_SUBSTEP_DT: f32 = 0.05;
@@ -116,5 +118,3 @@ pub const WANDER_RADIUS: i32 = 10;
 pub const WANDER_PICK_ATTEMPTS: usize = 8;
 /// Max Manhattan ring from a bed when searching for a vacate cell after sleep.
 pub const VACATE_SEARCH_RADIUS: i32 = 5;
-/// Time spent on the bed tile before sleep need is restored.
-pub const SLEEP_ON_BED_SEC: f32 = 2.0;

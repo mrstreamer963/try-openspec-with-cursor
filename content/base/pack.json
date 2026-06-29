@@ -1,0 +1,142 @@
+{
+  "needs": [
+    {
+      "id": "food",
+      "label": "Food",
+      "max": 100,
+      "decay_per_sec": 2.0,
+      "critical_threshold": 30
+    },
+    {
+      "id": "sleep",
+      "label": "Sleep",
+      "max": 100,
+      "decay_per_sec": 1.5,
+      "critical_threshold": 30
+    }
+  ],
+  "statuses": [
+    {
+      "id": "hungry",
+      "label": "Hungry",
+      "apply_when": {
+        "need": "food",
+        "condition": "below_threshold"
+      },
+      "effects": [
+        {
+          "type": "task_priority",
+          "task": "eat",
+          "priority": 1
+        }
+      ]
+    },
+    {
+      "id": "wants_sleep",
+      "label": "Wants sleep",
+      "apply_when": {
+        "need": "sleep",
+        "condition": "below_threshold"
+      },
+      "effects": [
+        {
+          "type": "task_priority",
+          "task": "sleep",
+          "priority": 1
+        }
+      ]
+    }
+  ],
+  "terrain": [
+    {
+      "id": "water",
+      "walkable": false,
+      "color": 2836672
+    },
+    {
+      "id": "sand",
+      "walkable": true,
+      "color": 14068398
+    },
+    {
+      "id": "grass",
+      "walkable": true,
+      "color": 3709545
+    }
+  ],
+  "buildings": [
+    {
+      "id": "wall",
+      "label": "🧱 Wall",
+      "work_required": 30,
+      "blocks_movement": true,
+      "blocks_settle": false,
+      "buildable": true,
+      "color": 7435926,
+      "on_complete": [],
+      "interactions": []
+    },
+    {
+      "id": "bed",
+      "label": "🛏 Bed",
+      "work_required": 50,
+      "blocks_movement": false,
+      "blocks_settle": false,
+      "buildable": true,
+      "color": 10461162,
+      "on_complete": [
+        {
+          "type": "reservation",
+          "kind": "single_occupant"
+        }
+      ],
+      "interactions": [
+        {
+          "mode": "on_tile",
+          "duration_sec": 2.0,
+          "effects": [
+            {
+              "type": "restore_need",
+              "need": "sleep",
+              "amount": 100
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "berry_bush",
+      "label": "🫐 Berry Bush",
+      "work_required": 40,
+      "blocks_movement": false,
+      "blocks_settle": true,
+      "buildable": true,
+      "color": 15029182,
+      "on_complete": [
+        {
+          "type": "supply",
+          "resource": "berries",
+          "amount": 3
+        }
+      ],
+      "interactions": [
+        {
+          "mode": "adjacent",
+          "duration_sec": 0,
+          "effects": [
+            {
+              "type": "consume_supply",
+              "resource": "berries",
+              "amount": 1
+            },
+            {
+              "type": "restore_need",
+              "need": "food",
+              "amount": 100
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

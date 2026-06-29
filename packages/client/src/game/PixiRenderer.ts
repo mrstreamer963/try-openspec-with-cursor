@@ -1,13 +1,18 @@
 import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
-import type { ColonistSnapshot, StateSnapshot } from './types';
 import {
-  BUILDING_COLORS,
-  COLONIST_COLOR,
-  SIM_TICK_MS,
-  TERRAIN_COLORS,
-  TILE_SIZE,
-  WORLD_SIZE,
-} from './types';
+  buildingColorMap,
+  loadBaseContent,
+  terrainColorMap,
+} from '../content/loadBaseContent';
+import type { ColonistSnapshot, StateSnapshot } from './types';
+import { COLONIST_COLOR, SIM_TICK_MS, TILE_SIZE, WORLD_SIZE } from './types';
+
+const content = loadBaseContent();
+const TERRAIN_COLORS = terrainColorMap(content);
+const BUILDING_COLORS = buildingColorMap(content);
+const BERRIES_PER_BUSH =
+  content.buildings.find((b) => b.id === 'berry_bush')?.on_complete.find((p) => p.type === 'supply')
+    ?.amount ?? 3;
 
 interface ColonistMotion {
   sampleX: number;
@@ -250,7 +255,7 @@ export class PixiRenderer {
     for (const tile of snapshot.tiles) {
       const g = new Graphics();
       g.rect(tile.x * TILE_SIZE, tile.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-      g.fill(TERRAIN_COLORS[tile.terrain]);
+      g.fill(TERRAIN_COLORS[tile.terrain] ?? 0x4a5568);
       this.terrainLayer.addChild(g);
     }
   }
@@ -266,7 +271,7 @@ export class PixiRenderer {
         TILE_SIZE - pad * 2,
         TILE_SIZE - pad * 2,
       );
-      const color = BUILDING_COLORS[site.building];
+      const color = BUILDING_COLORS[site.building] ?? 0x718096;
       const alpha = 0.25 + site.progress * 0.45;
       g.fill({ color, alpha });
       this.buildingsLayer.addChild(g);
@@ -281,10 +286,10 @@ export class PixiRenderer {
         TILE_SIZE - pad * 2,
         TILE_SIZE - pad * 2,
       );
-      let color = BUILDING_COLORS[b.building];
+      let color = BUILDING_COLORS[b.building] ?? 0x718096;
       let alpha = 1;
-      if (b.building === 'BerryBush' && b.berries != null) {
-        alpha = 0.45 + (b.berries / 3) * 0.55;
+      if (b.building === 'berry_bush' && b.berries != null) {
+        alpha = 0.45 + (b.berries / BERRIES_PER_BUSH) * 0.55;
       }
       g.fill({ color, alpha });
       this.buildingsLayer.addChild(g);

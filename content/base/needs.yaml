@@ -1,0 +1,11 @@
+needs:
+  - id: food
+    label: Food
+    max: 100
+    decay_per_sec: 2.0
+    critical_threshold: 30
+  - id: sleep
+    label: Sleep
+    max: 100
+    decay_per_sec: 1.5
+    critical_threshold: 30

@@ -1,9 +1,16 @@
 <script setup lang="ts">
+import { loadBaseContent, needLabel, statusLabel } from '../content/loadBaseContent';
 import type { ColonistSnapshot } from '../game/types';
 
 defineProps<{
   colonist: ColonistSnapshot | null;
 }>();
+
+const content = loadBaseContent();
+const foodLabel = needLabel(content, 'food');
+const sleepLabel = needLabel(content, 'sleep');
+const hungryLabel = statusLabel(content, 'hungry');
+const wantsSleepLabel = statusLabel(content, 'wants_sleep');
 </script>
 
 <template>
@@ -12,17 +19,17 @@ defineProps<{
     <dl>
       <dt>Position</dt>
       <dd>{{ Math.floor(colonist.x) }}, {{ Math.floor(colonist.y) }}</dd>
-      <dt :class="{ critical: colonist.hungry }">Food</dt>
+      <dt :class="{ critical: colonist.hungry }">{{ foodLabel }}</dt>
       <dd :class="{ critical: colonist.hungry }">
         <div class="bar"><div class="fill food" :style="{ width: colonist.food + '%' }" /></div>
         {{ Math.round(colonist.food) }}
-        <span v-if="colonist.hungry" class="status hungry">Hungry</span>
+        <span v-if="colonist.hungry" class="status hungry">{{ hungryLabel }}</span>
       </dd>
-      <dt :class="{ critical: colonist.wants_sleep }">Sleep</dt>
+      <dt :class="{ critical: colonist.wants_sleep }">{{ sleepLabel }}</dt>
       <dd :class="{ critical: colonist.wants_sleep }">
         <div class="bar"><div class="fill sleep" :style="{ width: colonist.sleep + '%' }" /></div>
         {{ Math.round(colonist.sleep) }}
-        <span v-if="colonist.wants_sleep" class="status sleep">Wants sleep</span>
+        <span v-if="colonist.wants_sleep" class="status sleep">{{ wantsSleepLabel }}</span>
       </dd>
       <dt>Task</dt>
       <dd>{{ colonist.task }}</dd>

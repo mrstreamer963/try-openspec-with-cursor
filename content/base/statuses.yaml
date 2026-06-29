@@ -1,0 +1,19 @@
+statuses:
+  - id: hungry
+    label: Hungry
+    apply_when:
+      need: food
+      condition: below_threshold
+    effects:
+      - type: task_priority
+        task: eat
+        priority: 1
+  - id: wants_sleep
+    label: Wants sleep
+    apply_when:
+      need: sleep
+      condition: below_threshold
+    effects:
+      - type: task_priority
+        task: sleep
+        priority: 1

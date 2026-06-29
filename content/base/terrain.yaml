@@ -1,0 +1,10 @@
+terrain:
+  - id: water
+    walkable: false
+    color: 0x2b6cb0
+  - id: sand
+    walkable: true
+    color: 0xd69e2e
+  - id: grass
+    walkable: true
+    color: 0x38a169

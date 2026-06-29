@@ -2,6 +2,14 @@ import { WORLD_SIZE, type StateSnapshot } from './types';
 
 export const SAVE_VERSION = 1;
 
+/**
+ * Save files from before yaml-content-definitions used PascalCase building/terrain ids
+ * (e.g. "BerryBush", "Grass"). Current saves use snake_case content ids from YAML
+ * (e.g. "berry_bush", "grass"). Old saves must be migrated manually or re-exported.
+ */
+export const SAVE_ID_MIGRATION_NOTE =
+  'Building and terrain ids in save state changed from PascalCase enum names to snake_case YAML ids.';
+
 export interface SaveFile {
   version: number;
   saved_at: string;
