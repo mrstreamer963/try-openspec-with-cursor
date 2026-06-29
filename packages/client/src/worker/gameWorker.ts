@@ -52,6 +52,9 @@ function handleEvent(event: IncomingEvent): void {
     paused = event.paused;
   } else if (event.type === 'set_speed') {
     speed = event.multiplier;
+  } else if (event.type === 'load_state') {
+    paused = event.state.paused;
+    speed = event.state.speed;
   }
 
   const snapshotJson = game.get_snapshot();

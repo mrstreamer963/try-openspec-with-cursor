@@ -58,7 +58,8 @@ export type OutgoingEvent =
 export type IncomingEvent =
   | { type: 'set_paused'; paused: boolean }
   | { type: 'set_speed'; multiplier: number }
-  | { type: 'build'; building: BuildingType; x: number; y: number };
+  | { type: 'build'; building: BuildingType; x: number; y: number }
+  | { type: 'load_state'; state: StateSnapshot };
 
 export type BuildMode = BuildingType | null;
 

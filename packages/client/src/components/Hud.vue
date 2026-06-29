@@ -8,6 +8,8 @@ defineProps<{
 const emit = defineEmits<{
   togglePause: [];
   setSpeed: [speed: number];
+  save: [];
+  load: [];
 }>();
 </script>
 
@@ -27,6 +29,10 @@ const emit = defineEmits<{
       >
         {{ s }}×
       </button>
+    </div>
+    <div class="file-group">
+      <button class="btn" @click="emit('save')">Save</button>
+      <button class="btn" @click="emit('load')">Load</button>
     </div>
   </div>
 </template>
@@ -68,5 +74,9 @@ const emit = defineEmits<{
 .btn.active {
   background: #3182ce;
   border-color: #4299e1;
+}
+.file-group {
+  display: flex;
+  gap: 6px;
 }
 </style>

@@ -3,9 +3,10 @@ use serde_json;
 use wasm_bindgen::prelude::*;
 
 use crate::components::{
-    BerrySupply, BuildingType, ColonistId, ColonistName, ConstructionSite, Hungry, Needs,
-    Position, Task, WantsSleep, work_required_for,
+    BedOccupancy, BerrySupply, Building, BuildingType, Colonist, ColonistId, ColonistName,
+    ConstructionSite, Hungry, Needs, Path, Position, Task, WantsSleep, work_required_for,
 };
+use crate::world::BERRIES_PER_BUSH;
 use crate::events::{
     BuildingSnapshot, ColonistSnapshot, ConstructionSiteSnapshot, IncomingEvent, OutgoingEvent,
     StateSnapshot, TileSnapshot,
@@ -44,7 +45,11 @@ impl Game {
     pub fn handle_event(&mut self, json: &str) -> String {
         match serde_json::from_str::<IncomingEvent>(json) {
             Ok(event) => {
-                self.dispatch(event);
+                if let Some(err) = self.dispatch(event) {
+                    return serde_json::to_string(&err).unwrap_or_else(|_| {
+                        r#"{"type":"error","message":"unknown error"}"#.to_string()
+                    });
+                }
                 String::new()
             }
             Err(e) => {
@@ -79,15 +84,19 @@ impl Game {
 }
 
 impl Game {
-    fn dispatch(&mut self, event: IncomingEvent) {
+    fn dispatch(&mut self, event: IncomingEvent) -> Option<OutgoingEvent> {
         match event {
-            IncomingEvent::SetPaused { paused } => self.paused = paused,
+            IncomingEvent::SetPaused { paused } => {
+                self.paused = paused;
+                None
+            }
             IncomingEvent::SetSpeed { multiplier } => {
                 self.speed = multiplier.clamp(0.1, 10.0);
+                None
             }
             IncomingEvent::Build { building, x, y } => {
                 if !is_valid_build_tile(&mut self.world, &self.grid, x, y) {
-                    return;
+                    return None;
                 }
                 self.world.spawn((
                     ConstructionSite {
@@ -100,7 +109,146 @@ impl Game {
                         y: y as f32,
                     },
                 ));
+                None
             }
+            IncomingEvent::LoadState { state } => {
+                if let Err(message) = self.restore_from_snapshot(state) {
+                    Some(OutgoingEvent::Error { message })
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    fn restore_from_snapshot(&mut self, snapshot: StateSnapshot) -> Result<(), String> {
+        let expected_tiles = (WORLD_SIZE * WORLD_SIZE) as usize;
+        if snapshot.tiles.len() != expected_tiles {
+            return Err(format!(
+                "invalid tile count: expected {}, got {}",
+                expected_tiles,
+                snapshot.tiles.len()
+            ));
+        }
+
+        self.despawn_game_entities();
+
+        let len = expected_tiles;
+        let mut terrain = vec![crate::components::TerrainType::Grass; len];
+        let mut buildings = vec![None; len];
+
+        for tile in &snapshot.tiles {
+            if let Some(i) = WorldGrid::index(tile.x, tile.y) {
+                terrain[i] = tile.terrain;
+            }
+        }
+
+        for building in &snapshot.buildings {
+            if let Some(i) = WorldGrid::index(building.x, building.y) {
+                buildings[i] = Some(building.building);
+            }
+        }
+
+        self.grid = WorldGrid {
+            terrain,
+            buildings,
+            seed: self.grid.seed,
+        };
+        self.world.insert_resource(self.grid.clone());
+
+        for building in &snapshot.buildings {
+            let position = Position {
+                x: building.x as f32,
+                y: building.y as f32,
+            };
+            if building.building == BuildingType::BerryBush {
+                let berries = building.berries.unwrap_or(BERRIES_PER_BUSH);
+                self.world.spawn((
+                    Building,
+                    position,
+                    building.building,
+                    BerrySupply::new(berries),
+                ));
+            } else if building.building == BuildingType::Bed {
+                self.world.spawn((
+                    Building,
+                    position,
+                    building.building,
+                    BedOccupancy::default(),
+                ));
+            } else {
+                self.world.spawn((Building, position, building.building));
+            }
+        }
+
+        for site in &snapshot.construction_sites {
+            let total = work_required_for(site.building);
+            let work_remaining = total * (1.0 - site.progress.clamp(0.0, 1.0));
+            self.world.spawn((
+                ConstructionSite {
+                    building_type: site.building,
+                    work_remaining,
+                    reserved_by: None,
+                },
+                Position {
+                    x: site.x as f32,
+                    y: site.y as f32,
+                },
+            ));
+        }
+
+        for colonist in &snapshot.colonists {
+            let mut entity = self.world.spawn((
+                Colonist,
+                ColonistId(colonist.id),
+                ColonistName(colonist.name.clone()),
+                Position {
+                    x: colonist.x,
+                    y: colonist.y,
+                },
+                Needs {
+                    food: colonist.food,
+                    sleep: colonist.sleep,
+                },
+                Task {
+                    kind: colonist.task,
+                    ..Task::default()
+                },
+                Path::default(),
+            ));
+            if colonist.hungry {
+                entity.insert(Hungry);
+            }
+            if colonist.wants_sleep {
+                entity.insert(WantsSleep);
+            }
+        }
+
+        self.paused = snapshot.paused;
+        self.speed = snapshot.speed.clamp(0.1, 10.0);
+        Ok(())
+    }
+
+    fn despawn_game_entities(&mut self) {
+        let colonists: Vec<Entity> = {
+            let mut q = self.world.query::<(Entity, &Colonist)>();
+            q.iter(&self.world).map(|(e, _)| e).collect()
+        };
+        let buildings: Vec<Entity> = {
+            let mut q = self.world.query::<(Entity, &Building)>();
+            q.iter(&self.world).map(|(e, _)| e).collect()
+        };
+        let sites: Vec<Entity> = {
+            let mut q = self.world.query::<(Entity, &ConstructionSite)>();
+            q.iter(&self.world).map(|(e, _)| e).collect()
+        };
+
+        for entity in colonists
+            .into_iter()
+            .chain(buildings)
+            .chain(sites)
+        {
+            let _ = self.world.despawn(entity);
         }
     }
 
@@ -267,5 +415,77 @@ mod tests {
                 colonist.id
             );
         }
+    }
+
+    #[test]
+    fn load_state_round_trip_preserves_key_fields() {
+        let mut game = Game::new();
+        game.handle_event(r#"{"type":"set_paused","paused":true}"#);
+        game.handle_event(r#"{"type":"set_speed","multiplier":3}"#);
+
+        let json = game.get_snapshot();
+        let event: OutgoingEvent = serde_json::from_str(&json).unwrap();
+        let OutgoingEvent::StateSnapshot(original) = event else {
+            panic!("expected state snapshot");
+        };
+
+        let load_json =
+            serde_json::to_string(&IncomingEvent::LoadState {
+                state: original.clone(),
+            })
+            .unwrap();
+        let err = game.handle_event(&load_json);
+        assert!(err.is_empty(), "load should succeed: {err}");
+
+        let json2 = game.get_snapshot();
+        let event2: OutgoingEvent = serde_json::from_str(&json2).unwrap();
+        let OutgoingEvent::StateSnapshot(restored) = event2 else {
+            panic!("expected state snapshot");
+        };
+
+        assert_eq!(restored.paused, original.paused);
+        assert_eq!(restored.speed, original.speed);
+        assert_eq!(restored.tiles.len(), original.tiles.len());
+        assert_eq!(restored.buildings.len(), original.buildings.len());
+        assert_eq!(restored.construction_sites.len(), original.construction_sites.len());
+        assert_eq!(restored.colonists.len(), original.colonists.len());
+
+        for (a, b) in restored.colonists.iter().zip(original.colonists.iter()) {
+            assert_eq!(a.id, b.id);
+            assert_eq!(a.name, b.name);
+            assert_eq!(a.x, b.x);
+            assert_eq!(a.y, b.y);
+            assert_eq!(a.food, b.food);
+            assert_eq!(a.sleep, b.sleep);
+            assert_eq!(a.hungry, b.hungry);
+            assert_eq!(a.wants_sleep, b.wants_sleep);
+            assert_eq!(a.task, b.task);
+        }
+    }
+
+    #[test]
+    fn load_state_rejects_invalid_tile_count() {
+        let mut game = Game::new();
+
+        let json = game.get_snapshot();
+        let event: OutgoingEvent = serde_json::from_str(&json).unwrap();
+        let OutgoingEvent::StateSnapshot(mut snapshot) = event else {
+            panic!("expected state snapshot");
+        };
+        snapshot.tiles.truncate(100);
+
+        let load_json =
+            serde_json::to_string(&IncomingEvent::LoadState { state: snapshot }).unwrap();
+        let err = game.handle_event(&load_json);
+        assert!(err.contains("error"), "expected error response: {err}");
+        assert!(err.contains("invalid tile count"));
+
+        let json2 = game.get_snapshot();
+        let event2: OutgoingEvent = serde_json::from_str(&json2).unwrap();
+        let OutgoingEvent::StateSnapshot(unchanged) = event2 else {
+            panic!("expected state snapshot");
+        };
+        assert_eq!(unchanged.tiles.len(), 2500);
+        assert!(!unchanged.paused);
     }
 }

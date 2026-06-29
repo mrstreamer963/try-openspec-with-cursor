@@ -12,6 +12,7 @@ pub enum IncomingEvent {
         x: i32,
         y: i32,
     },
+    LoadState { state: StateSnapshot },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

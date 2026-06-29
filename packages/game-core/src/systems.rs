@@ -122,7 +122,7 @@ fn pick_wander_target(
     let attempts = WANDER_PICK_ATTEMPTS.min(candidates.len());
     for i in shuffled_indices(candidates.len(), attempts) {
         let target = candidates[i];
-        if let Some(waypoints) = find_path(grid, from, target) {
+        if let Some(waypoints) = find_path_for_colonist(grid, from, target, occupied, self_entity) {
             return Some(if waypoints.len() > 1 {
                 waypoints[1..].to_vec()
             } else {
@@ -2272,5 +2272,83 @@ mod tests {
         let path = world.get::<Path>(colonist).unwrap();
         assert_eq!(task.kind, TaskKind::Idle);
         assert!(!path.waypoints.is_empty());
+    }
+
+    #[test]
+    fn wander_path_avoids_occupied_cells_on_first_step() {
+        use crate::world::generate_world;
+
+        for seed in 0..200u32 {
+            let grid = generate_world(seed);
+            let mut world = World::new();
+            spawn_colonists(&mut world, &grid);
+
+            update_need_buffs(&mut world);
+            auto_assign_tasks(&mut world, &grid);
+            let occupancy = colonist_occupancy_map(&mut world);
+
+            let mut q = world.query::<(Entity, &Position, &Task, &Path)>();
+            for (entity, pos, task, path) in q.iter(&world) {
+                if task.kind != TaskKind::Idle || path.waypoints.is_empty() {
+                    continue;
+                }
+                let wp = path.waypoints[0];
+                assert!(
+                    !occupancy.get(&wp).is_some_and(|&o| o != entity),
+                    "seed {seed}: colonist at {:?} has blocked first waypoint {:?}",
+                    pos.grid_cell(),
+                    wp
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn spawn_colonists_all_move_after_wander_assignment() {
+        use crate::world::generate_world;
+
+        let grid = generate_world(42);
+        let mut world = World::new();
+        spawn_colonists(&mut world, &grid);
+
+        let mut start_positions: HashMap<Entity, (i32, i32)> = HashMap::new();
+        {
+            let mut q = world.query::<(Entity, &Position, &Colonist)>();
+            for (entity, pos, _) in q.iter(&world) {
+                start_positions.insert(entity, pos.grid_cell());
+            }
+        }
+        assert_eq!(start_positions.len(), 3, "expected 3 spawned colonists");
+
+        for _ in 0..200 {
+            update_need_buffs(&mut world);
+            auto_assign_tasks(&mut world, &grid);
+            colonist_movement(&mut world, 0.05);
+        }
+
+        let mut stuck = Vec::new();
+        let occupancy = colonist_occupancy_map(&mut world);
+        {
+            let mut q = world.query::<(Entity, &Position, &Task, &Path)>();
+            for (entity, pos, task, path) in q.iter(&world) {
+                let start = start_positions[&entity];
+                let now = pos.grid_cell();
+                let has_active_path = path.index < path.waypoints.len();
+                if task.kind == TaskKind::Idle && has_active_path && now == start {
+                    let wp = path.waypoints[path.index];
+                    let blocked_first = occupancy
+                        .get(&wp)
+                        .filter(|&&e| e != entity)
+                        .copied();
+                    stuck.push((entity, start, wp, blocked_first));
+                }
+            }
+        }
+
+        assert!(
+            stuck.is_empty(),
+            "colonists stuck at spawn with active wander path: {:?}",
+            stuck
+        );
     }
 }
