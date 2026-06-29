@@ -113,6 +113,14 @@ The view layer SHALL render colonist sprites at their float world position from 
 - **WHEN** a colonist snapshot has position `(5.4, 7.2)`
 - **THEN** the colonist sprite center is drawn at pixel coordinates `(5.4 * TILE_SIZE + TILE_SIZE/2, 7.2 * TILE_SIZE + TILE_SIZE/2)`
 
+#### Scenario: Smooth motion between snapshots
+- **WHEN** a colonist is moving and `at_task_stand` is `false`
+- **THEN** the renderer extrapolates position between 20 Hz snapshots for smooth animation
+
+#### Scenario: Frozen sprite at task stand
+- **WHEN** a colonist snapshot has `at_task_stand: true`
+- **THEN** the renderer draws the colonist at the snapshot position without extrapolation
+
 ### Requirement: Colonist click detection
 The view layer SHALL detect colonist clicks by distance from the click point to the colonist sprite center, not by tile coordinate equality.
 

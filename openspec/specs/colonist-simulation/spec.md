@@ -50,6 +50,10 @@ Each colonist SHALL have a world position expressed as floating-point coordinate
 - **WHEN** a state snapshot is built
 - **THEN** each colonist's `x` and `y` fields are floating-point tile coordinates
 
+#### Scenario: At-task-stand flag in snapshot
+- **WHEN** a state snapshot is built and a colonist is locked at its task stand (including a build worker adjacent to a construction site)
+- **THEN** the colonist entry includes `at_task_stand: true`; otherwise `at_task_stand` is `false`
+
 ### Requirement: Continuous movement
 Colonists SHALL move continuously between path waypoints at a configurable speed (`MOVE_SPEED` tiles per second), advancing by fractional tile amounts each tick without rounding position to integer cells during transit.
 
@@ -60,6 +64,10 @@ Colonists SHALL move continuously between path waypoints at a configurable speed
 #### Scenario: Arrive at waypoint
 - **WHEN** a colonist's remaining distance to the current waypoint is less than or equal to one tick's travel distance
 - **THEN** the colonist snaps to the waypoint coordinates and advances to the next waypoint
+
+#### Scenario: High-speed movement substepping
+- **WHEN** a simulation tick uses a scaled `dt` greater than the movement substep interval (e.g. at 5× or 10× game speed)
+- **THEN** colonist movement is applied in fixed substeps so per-tick travel distance matches 1× simulation
 
 ### Requirement: Unique settled cell occupancy
 At most one colonist SHALL occupy a grid cell when movement completes a step to that cell. A colonist's settled cell is its current grid cell derived from position.
@@ -149,6 +157,10 @@ When a colonist is idle with no Eat, Sleep, or Build assignment and no active pa
 - **WHEN** selecting a wander destination
 - **THEN** the simulation excludes the colonist's current grid cell and cells occupied by other colonists' settled positions from candidate targets
 
+#### Scenario: Wander avoids bush destination
+- **WHEN** selecting a wander destination
+- **THEN** the simulation does not select a BerryBush tile as the wander target
+
 #### Scenario: Wander uses pathfinding
 - **WHEN** a wander destination is selected
 - **THEN** the colonist follows a valid A* path to that cell; if no path exists after retry attempts, the colonist remains idle until the next assignment pass
@@ -173,22 +185,26 @@ When a colonist has no critical need and a construction order exists without an 
 - **THEN** other idle colonists skip that order and target the next nearest unassigned site
 
 ### Requirement: Build task execution
-When a colonist with a Build task is on the construction site tile, the simulation SHALL apply construction work each tick until the order completes or the task is cleared.
+When a colonist with a Build task is orthogonally adjacent to the construction site on a valid stand tile, the simulation SHALL apply construction work each tick until the order completes or the task is cleared.
 
-#### Scenario: Work at construction site
-- **WHEN** a colonist with a Build task arrives at the construction site tile
+#### Scenario: Work at adjacent stand
+- **WHEN** a colonist with a Build task is orthogonally adjacent to the construction site with no remaining path waypoints
 - **THEN** construction work progress increases each simulation tick
 
+#### Scenario: Builder locked in place when adjacent
+- **WHEN** a colonist with a Build task reaches any orthogonally adjacent cell to the construction site
+- **THEN** the colonist stops moving, its path is cleared, and it builds from that cell without being forced to walk to a different pre-assigned stand tile
+
 #### Scenario: Complete build task
-- **WHEN** construction work on the assigned site reaches completion while the colonist is present
+- **WHEN** construction work on the assigned site reaches completion while the colonist is adjacent
 - **THEN** the finished building is created, the construction order is removed, and the colonist's task is cleared to Idle
 
-#### Scenario: Path to construction site
+#### Scenario: Path to build stand
 - **WHEN** a colonist is assigned a Build task at a distant construction site
-- **THEN** the colonist follows a valid A* path to the site tile
+- **THEN** the colonist follows a valid A* path to an adjacent stand tile next to the site
 
 #### Scenario: No path to construction site
-- **WHEN** no walkable path exists to the construction site
+- **WHEN** no walkable path exists to an adjacent stand for the construction site
 - **THEN** the Build task is cancelled, the site reservation is released, and the colonist returns to idle
 
 ### Requirement: A* pathfinding
@@ -264,3 +280,53 @@ At most one colonist SHALL occupy or be reserved for a given Bed at any time.
 #### Scenario: Bed released after sleep
 - **WHEN** a colonist completes or fails a Sleep task that held a bed reservation
 - **THEN** the bed becomes available for other colonists
+
+### Requirement: Blocked waypoint repath
+When a colonist has an active path and its next waypoint cell is occupied by another colonist's settled position, the simulation SHALL recalculate movement on the assignment pass before movement runs that tick.
+
+#### Scenario: Eat task repaths around intermediate blocker
+- **WHEN** a colonist with an Eat task is blocked on its next waypoint by another colonist and an alternate route to the eat stand exists
+- **THEN** the colonist's path waypoints are replaced with a new route to the same stand target and the Eat task is unchanged
+
+#### Scenario: Build task repaths around intermediate blocker
+- **WHEN** a colonist with a Build task is blocked on its next waypoint by another colonist and an alternate route to the build stand exists
+- **THEN** the colonist's path waypoints are replaced with a new route to the same stand target and the Build task is unchanged
+
+#### Scenario: Sleep task repaths around intermediate blocker
+- **WHEN** a colonist with a Sleep task is blocked on its next waypoint by another colonist and an alternate route to the bed tile exists
+- **THEN** the colonist's path waypoints are replaced with a new route to the same bed target and the Sleep task is unchanged
+
+#### Scenario: Idle wander path cleared when blocked
+- **WHEN** an idle colonist following a wander path is blocked on its next waypoint
+- **THEN** the wander path is cleared so a new destination can be assigned on the same assignment pass
+
+#### Scenario: Unreachable target clears task
+- **WHEN** a colonist with an Eat, Build, or Sleep task is blocked on its next waypoint and no route exists to the task target avoiding occupied cells
+- **THEN** the task is cleared, reservations are released, and the colonist returns to idle assignment
+
+#### Scenario: Occupied eat stand clears for reassignment
+- **WHEN** a colonist with an Eat task is blocked on its next waypoint because that waypoint is the task target cell and it is occupied by another colonist
+- **THEN** the Eat task is cleared, reservations are released, and the colonist is eligible for reassignment to another bush or stand on the same assignment pass
+
+#### Scenario: Occupied bed clears for reassignment
+- **WHEN** a colonist with a Sleep task is blocked on its next waypoint because that waypoint is the bed target cell and it is occupied by another colonist
+- **THEN** the Sleep task is cleared, reservations are released, and the colonist is eligible for reassignment to another bed on the same assignment pass
+
+#### Scenario: Build waits when goal stand occupied
+- **WHEN** a colonist with a Build task is blocked on its next waypoint because that waypoint is the assigned stand target and it is occupied by another colonist
+- **THEN** the Build task is unchanged and the colonist waits until the stand is free
+
+### Requirement: Berry bush pass-through without settling
+Colonists SHALL be able to traverse BerryBush tiles during movement, but SHALL NOT treat a BerryBush tile as a valid settled cell or movement waypoint terminus.
+
+#### Scenario: Bush waypoint skipped during movement
+- **WHEN** a colonist's next path waypoint is a BerryBush tile
+- **THEN** the colonist does not snap to that tile and advances to the following waypoint while continuing movement
+
+#### Scenario: Colonist ejected from bush cell
+- **WHEN** a colonist's settled grid cell is a BerryBush tile after movement
+- **THEN** the simulation moves the colonist to a nearby settleable cell if one exists
+
+#### Scenario: Eat stand not on bush
+- **WHEN** assigning an Eat or Build stand tile
+- **THEN** the simulation does not select a BerryBush tile as the stand
