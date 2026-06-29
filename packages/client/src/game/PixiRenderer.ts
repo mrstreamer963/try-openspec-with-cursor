@@ -333,9 +333,12 @@ export class PixiRenderer {
 
       if (motion.initialized) {
         const dt = (now - motion.sampledAt) / 1000;
-        if (dt > 0) {
+        if (dt > 0 && !c.at_task_stand) {
           motion.vx = (c.x - motion.sampleX) / dt;
           motion.vy = (c.y - motion.sampleY) / dt;
+        } else {
+          motion.vx = 0;
+          motion.vy = 0;
         }
       } else {
         motion.visualX = c.x;
@@ -372,10 +375,16 @@ export class PixiRenderer {
         motion.visualY = motion.sampleY;
         motion.vx = 0;
         motion.vy = 0;
+      } else if (c.at_task_stand) {
+        motion.visualX = motion.sampleX;
+        motion.visualY = motion.sampleY;
+        motion.vx = 0;
+        motion.vy = 0;
       } else {
         const elapsed = (now - motion.sampledAt) / 1000;
         // Extrapolate between 20 Hz snapshots so rAF draws smooth motion.
-        const maxExtrapolate = (SIM_TICK_MS / 1000) * 1.25;
+        const speed = Math.max(1, this.snapshot.speed);
+        const maxExtrapolate = ((SIM_TICK_MS / 1000) * 1.25) / speed;
         const t = Math.min(elapsed, maxExtrapolate);
         motion.visualX = motion.sampleX + motion.vx * t;
         motion.visualY = motion.sampleY + motion.vy * t;

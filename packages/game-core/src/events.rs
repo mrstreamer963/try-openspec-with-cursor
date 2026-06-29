@@ -42,6 +42,9 @@ pub struct ColonistSnapshot {
     pub hungry: bool,
     pub wants_sleep: bool,
     pub task: TaskKind,
+    /// True when the colonist has reached the task stand and finished walking.
+    #[serde(default)]
+    pub at_task_stand: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

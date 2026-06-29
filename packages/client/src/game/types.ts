@@ -32,6 +32,7 @@ export interface ColonistSnapshot {
   hungry: boolean;
   wants_sleep: boolean;
   task: TaskKind;
+  at_task_stand?: boolean;
 }
 
 export interface StateSnapshot {

@@ -7,9 +7,9 @@ use crate::components::{
     ConstructionSite, COLONIST_NAME_POOL, Hungry, NeedKind, Needs, Path, Position, SleepingOnBed,
     Task, TaskKind, WantsSleep, BUILD_WORK_PER_TICK,
 };
-use crate::pathfinding::{best_adjacent_stand, find_path, find_path_avoiding};
+use crate::pathfinding::{find_path, find_path_avoiding};
 use crate::world::{
-    WorldGrid, BERRIES_PER_BUSH, FOOD_DECAY_PER_SEC, MOVE_SPEED, NEED_RESTORE, NEED_THRESHOLD,
+    WorldGrid, BERRIES_PER_BUSH, FOOD_DECAY_PER_SEC, MOVE_SPEED, MOVEMENT_SUBSTEP_DT, NEED_RESTORE, NEED_THRESHOLD,
     SLEEP_DECAY_PER_SEC, SLEEP_ON_BED_SEC, VACATE_SEARCH_RADIUS, WANDER_MIN_RADIUS,
     WANDER_PICK_ATTEMPTS, WANDER_RADIUS, WORLD_SIZE,
 };
@@ -81,6 +81,124 @@ fn find_path_for_colonist(
     find_path_avoiding(grid, from, goal, &blocked)
 }
 
+fn waypoints_from_route(route: &[(i32, i32)]) -> Vec<(i32, i32)> {
+    if route.len() > 1 {
+        route[1..].to_vec()
+    } else {
+        route.to_vec()
+    }
+}
+
+fn set_path_from_route(path: &mut Path, route: Vec<(i32, i32)>) {
+    path.waypoints = waypoints_from_route(&route);
+    path.index = 0;
+}
+
+fn is_berry_bush_cell(grid: &WorldGrid, cell: (i32, i32)) -> bool {
+    grid.building_at(cell.0, cell.1) == Some(BuildingType::BerryBush)
+}
+
+/// Walkable cells where a colonist may snap or idle (excludes berry bush tiles).
+fn is_colonist_settle_cell(grid: &WorldGrid, cell: (i32, i32)) -> bool {
+    grid.is_walkable(cell.0, cell.1) && !is_berry_bush_cell(grid, cell)
+}
+
+fn colonist_at_task_target(pos: &Position, task: &Task) -> bool {
+    let cell = pos.grid_cell();
+    cell == (task.target_x, task.target_y)
+}
+
+pub fn colonist_at_task_stand(pos: &Position, task: &Task, path: &Path) -> bool {
+    match task.kind {
+        TaskKind::Build => colonist_is_building(pos, task),
+        TaskKind::Eat | TaskKind::Sleep => {
+            if path.index < path.waypoints.len() {
+                return false;
+            }
+            colonist_at_task_target(pos, task)
+        }
+        TaskKind::Idle => false,
+    }
+}
+
+/// Build worker is locked in place once adjacent to the construction site.
+fn colonist_is_building(pos: &Position, task: &Task) -> bool {
+    if task.kind != TaskKind::Build {
+        return false;
+    }
+    let cell = pos.grid_cell();
+    (cell.0 - task.building_x).abs() + (cell.1 - task.building_y).abs() == 1
+}
+
+fn colonist_pins_cell(world: &World, entity: Entity, cell: (i32, i32)) -> bool {
+    let Some(task) = world.get::<Task>(entity) else {
+        return false;
+    };
+    let Some(pos) = world.get::<Position>(entity) else {
+        return false;
+    };
+    let Some(path) = world.get::<Path>(entity) else {
+        return false;
+    };
+
+    match task.kind {
+        TaskKind::Build => colonist_is_building(pos, task) && pos.grid_cell() == cell,
+        TaskKind::Eat | TaskKind::Sleep => {
+            colonist_at_task_stand(pos, task, path) && pos.grid_cell() == cell
+        }
+        TaskKind::Idle => false,
+    }
+}
+
+fn reserved_stands_for_active_tasks(world: &mut World) -> HashSet<(i32, i32)> {
+    let mut reserved = HashSet::new();
+    let mut q = world.query::<(&Task, &Position)>();
+    for (task, pos) in q.iter(world) {
+        match task.kind {
+            TaskKind::Eat => {
+                reserved.insert((task.target_x, task.target_y));
+            }
+            TaskKind::Build => {
+                if colonist_is_building(pos, task) {
+                    reserved.insert(pos.grid_cell());
+                } else {
+                    reserved.insert((task.target_x, task.target_y));
+                }
+            }
+            TaskKind::Idle | TaskKind::Sleep => {}
+        }
+    }
+    reserved
+}
+
+/// Snap build workers on adjacent cells and clear any remaining path to the stand.
+fn lock_building_colonists(world: &mut World) {
+    let mut q = world.query::<(&mut Position, &Task, &mut Path)>();
+    for (mut pos, task, mut path) in q.iter_mut(world) {
+        if !colonist_is_building(&*pos, task) {
+            continue;
+        }
+        let cell = pos.grid_cell();
+        pos.x = cell.0 as f32;
+        pos.y = cell.1 as f32;
+        path.waypoints.clear();
+        path.index = 0;
+    }
+}
+
+/// Clears movement for colonists already on their task stand (e.g. eating).
+fn stabilize_task_stand_holders(world: &mut World) {
+    let mut q = world.query::<(&mut Position, &Task, &mut Path)>();
+    for (mut pos, task, mut path) in q.iter_mut(world) {
+        if task.kind == TaskKind::Eat && colonist_at_task_target(&*pos, task) {
+            pos.x = task.target_x as f32;
+            pos.y = task.target_y as f32;
+            path.waypoints.clear();
+            path.index = 0;
+        }
+    }
+}
+
 fn stand_available_for_eat(
     stand: (i32, i32),
     occupancy: &HashMap<(i32, i32), Entity>,
@@ -103,7 +221,7 @@ fn pick_wander_target(
                 continue;
             }
             let cell = (from.0 + dx, from.1 + dy);
-            if !grid.is_walkable(cell.0, cell.1) {
+            if !is_colonist_settle_cell(grid, cell) {
                 continue;
             }
             if let Some(&occupant) = occupied.get(&cell) {
@@ -298,8 +416,8 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
 
     let occupancy = colonist_occupancy_map(world);
     release_unreachable_eat_tasks(world, grid, &occupancy);
-    let prefer_sleep_first = release_stuck_tasks(world);
-    release_blocked_idle_wander(world);
+    let mut prefer_sleep_first = release_stuck_tasks(world);
+    prefer_sleep_first.extend(repath_blocked_colonists(world, grid));
 
     let berry_bushes: Vec<(i32, i32)> = {
         let mut q = world.query::<(&Position, &BuildingType, Option<&BerrySupply>)>();
@@ -347,7 +465,7 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
 
     let mut reserved_beds: HashSet<Entity> = HashSet::new();
     let mut reserved_sites: HashSet<Entity> = HashSet::new();
-    let mut reserved_stands: HashSet<(i32, i32)> = HashSet::new();
+    let mut reserved_stands = reserved_stands_for_active_tasks(world);
     let mut pending: Vec<PendingAssignment> = Vec::new();
     let mut pending_wander: Vec<(Entity, Vec<(i32, i32)>)> = Vec::new();
 
@@ -415,6 +533,9 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
                     if assignment.task_kind == TaskKind::Eat {
                         reserved_stands.insert((assignment.target_x, assignment.target_y));
                     }
+                    if assignment.task_kind == TaskKind::Build {
+                        reserved_stands.insert((assignment.target_x, assignment.target_y));
+                    }
 
                     pending.push(assignment);
                     need_assigned = true;
@@ -427,9 +548,15 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
         }
 
         // Idle mode: no Hungry / WantsSleep buffs — build orders, then wander.
-        if let Some((site_entity, (bx, by), (sx, sy))) =
-            nearest_build_assignment(grid, (gx, gy), &open_sites, &reserved_sites)
-        {
+        if let Some((site_entity, (bx, by), (sx, sy))) = nearest_build_assignment(
+            grid,
+            (gx, gy),
+            &open_sites,
+            &reserved_sites,
+            &occupancy,
+            &reserved_stands,
+            entity,
+        ) {
             if let Some(waypoints) = find_path(grid, (gx, gy), (sx, sy)) {
                 let path_waypoints = if waypoints.len() > 1 {
                     waypoints[1..].to_vec()
@@ -576,6 +703,9 @@ fn release_stuck_tasks(world: &mut World) -> HashSet<Entity> {
                 if !matches!(task.kind, TaskKind::Build | TaskKind::Eat | TaskKind::Sleep) {
                     return None;
                 }
+                if task.kind == TaskKind::Build && colonist_is_building(pos, task) {
+                    return None;
+                }
                 let (gx, gy) = pos.grid_cell();
                 if gx == task.target_x && gy == task.target_y {
                     return None;
@@ -591,7 +721,7 @@ fn release_stuck_tasks(world: &mut World) -> HashSet<Entity> {
     let mut prefer_sleep_first = HashSet::new();
 
     for (entity, kind) in stuck {
-        if matches!(kind, TaskKind::Build) {
+        if kind == TaskKind::Build {
             release_construction_reservation(world, entity);
         }
         if matches!(kind, TaskKind::Eat) {
@@ -603,15 +733,15 @@ fn release_stuck_tasks(world: &mut World) -> HashSet<Entity> {
     prefer_sleep_first
 }
 
-/// Clears wander paths for idle colonists blocked on the next waypoint so
-/// `auto_assign_tasks` can pick a new destination.
-fn release_blocked_idle_wander(world: &mut World) {
+/// Recalculates paths for colonists blocked on the next waypoint.
+/// Idle colonists get their path cleared for wander reassignment; active tasks repath to target.
+fn repath_blocked_colonists(world: &mut World, grid: &WorldGrid) -> HashSet<Entity> {
     let occupancy = colonist_occupancy_map(world);
     let blocked: Vec<Entity> = {
         let mut q = world.query::<(Entity, &Task, &Path)>();
         q.iter(world)
-            .filter_map(|(entity, task, path)| {
-                if task.kind != TaskKind::Idle || path.index >= path.waypoints.len() {
+            .filter_map(|(entity, _task, path)| {
+                if path.index >= path.waypoints.len() {
                     return None;
                 }
                 let (tx, ty) = path.waypoints[path.index];
@@ -624,11 +754,83 @@ fn release_blocked_idle_wander(world: &mut World) {
             .collect()
     };
 
+    let mut prefer_sleep_first = HashSet::new();
+
     for entity in blocked {
-        if let Some(mut path) = world.get_mut::<Path>(entity) {
-            path.clear();
+        let task = match world.get::<Task>(entity) {
+            Some(t) => *t,
+            None => continue,
+        };
+        let from = match world.get::<Position>(entity) {
+            Some(p) => p.grid_cell(),
+            None => continue,
+        };
+
+        match task.kind {
+            TaskKind::Idle => {
+                if let Some(mut path) = world.get_mut::<Path>(entity) {
+                    path.clear();
+                }
+            }
+            TaskKind::Eat | TaskKind::Build | TaskKind::Sleep => {
+                if task.kind == TaskKind::Build {
+                    if let Some(pos) = world.get::<Position>(entity) {
+                        if colonist_is_building(pos, &task) {
+                            if let Some(mut path) = world.get_mut::<Path>(entity) {
+                                path.clear();
+                            }
+                            if let Some(mut pos) = world.get_mut::<Position>(entity) {
+                                let cell = pos.grid_cell();
+                                pos.x = cell.0 as f32;
+                                pos.y = cell.1 as f32;
+                            }
+                            continue;
+                        }
+                    }
+                }
+
+                let goal = (task.target_x, task.target_y);
+                let blocked_on_goal = world
+                    .get::<Path>(entity)
+                    .map(|path| path.waypoints[path.index] == goal)
+                    .unwrap_or(false);
+
+                if blocked_on_goal {
+                    if task.kind == TaskKind::Eat {
+                        prefer_sleep_first.insert(entity);
+                        clear_task(world, entity);
+                    } else if task.kind == TaskKind::Sleep {
+                        clear_task(world, entity);
+                    }
+                    // Build: wait for the stand to free — do not reassign to another cell.
+                    continue;
+                }
+
+                match find_path_for_colonist(grid, from, goal, &occupancy, entity) {
+                    Some(route) => {
+                        let new_waypoints = waypoints_from_route(&route);
+                        let should_update = world
+                            .get::<Path>(entity)
+                            .map(|path| new_waypoints.as_slice() != &path.waypoints[path.index..])
+                            .unwrap_or(false);
+                        if should_update {
+                            if let Some(mut path) = world.get_mut::<Path>(entity) {
+                                set_path_from_route(&mut path, route);
+                            }
+                        }
+                    }
+                    None => {
+                        if task.kind == TaskKind::Eat {
+                            prefer_sleep_first.insert(entity);
+                        }
+                        clear_task(world, entity);
+                    }
+                }
+            }
         }
     }
+
+    prefer_sleep_first
 }
 
 fn nearest_build_assignment(
@@ -636,7 +838,11 @@ fn nearest_build_assignment(
     from: (i32, i32),
     sites: &[(Entity, i32, i32)],
     reserved: &HashSet<Entity>,
+    occupancy: &HashMap<(i32, i32), Entity>,
+    reserved_stands: &HashSet<(i32, i32)>,
+    self_entity: Entity,
 ) -> Option<(Entity, (i32, i32), (i32, i32))> {
+    let blocked = colonist_blocked_cells(occupancy, self_entity);
     let mut candidates: Vec<((Entity, i32, i32), i32)> = sites
         .iter()
         .filter(|(entity, _, _)| !reserved.contains(entity))
@@ -645,8 +851,19 @@ fn nearest_build_assignment(
     candidates.sort_by_key(|(_, dist)| *dist);
 
     for ((entity, sx, sy), _) in candidates {
-        if let Some(stand) = best_adjacent_stand(grid, (sx, sy), from) {
-            return Some((entity, (sx, sy), stand));
+        if let Some(stand) = crate::pathfinding::best_adjacent_stand_filtered(
+            grid,
+            (sx, sy),
+            from,
+            |stand| {
+                !reserved_stands.contains(&stand)
+                    && !occupancy.contains_key(&stand)
+                    && !is_berry_bush_cell(grid, stand)
+            },
+        ) {
+            if find_path_avoiding(grid, from, stand, &blocked).is_some() {
+                return Some((entity, (sx, sy), stand));
+            }
         }
     }
     None
@@ -683,7 +900,7 @@ fn try_need_assignment(
             bed_entity: None,
             site_entity: None,
         }),
-        NeedKind::Sleep => nearest_free_bed(from, free_beds, reserved_beds).map(
+        NeedKind::Sleep => nearest_free_bed(from, free_beds, reserved_beds, occupancy, entity).map(
             |(bed_entity, bx, by)| PendingAssignment {
                 entity,
                 task_kind: TaskKind::Sleep,
@@ -719,7 +936,10 @@ fn nearest_eat_assignment(
             grid,
             (bx, by),
             from,
-            |stand| stand_available_for_eat(stand, occupancy, reserved_stands),
+            |stand| {
+                stand_available_for_eat(stand, occupancy, reserved_stands)
+                    && !is_berry_bush_cell(grid, stand)
+            },
         ) {
             if find_path_avoiding(grid, from, stand, &blocked).is_some() {
                 return Some(((bx, by), stand));
@@ -733,9 +953,12 @@ fn nearest_free_bed(
     from: (i32, i32),
     beds: &[(Entity, i32, i32)],
     reserved: &HashSet<Entity>,
+    occupancy: &HashMap<(i32, i32), Entity>,
+    self_entity: Entity,
 ) -> Option<(Entity, i32, i32)> {
     beds.iter()
         .filter(|(entity, _, _)| !reserved.contains(entity))
+        .filter(|(_, bx, by)| is_cell_free(occupancy, (*bx, *by), self_entity))
         .min_by_key(|(_, bx, by)| (bx - from.0).abs() + (by - from.1).abs())
         .map(|(entity, bx, by)| (*entity, *bx, *by))
 }
@@ -764,7 +987,7 @@ fn find_vacate_cell_after_sleep(
                     continue;
                 }
                 let cell = (bed.0 + dx, bed.1 + dy);
-                if cell == bed || !grid.is_walkable(cell.0, cell.1) {
+                if cell == bed || !is_colonist_settle_cell(grid, cell) {
                     continue;
                 }
                 if !is_cell_free(occupancy, cell, self_entity) {
@@ -803,7 +1026,11 @@ fn resolve_colonist_overlaps(world: &mut World, grid: &WorldGrid) {
                 continue;
             }
             entities.sort_by_key(|e| e.to_bits());
-            let entity = entities[1];
+            let entity = entities
+                .iter()
+                .find(|&&e| !colonist_pins_cell(world, e, cell))
+                .copied()
+                .unwrap_or(entities[1]);
             if let Some(dest) =
                 find_vacate_cell_after_sleep(grid, cell, cell, &occupancy, entity)
             {
@@ -826,21 +1053,104 @@ fn resolve_colonist_overlaps(world: &mut World, grid: &WorldGrid) {
     }
 }
 
+/// Advances past berry-bush waypoints so colonists pass through without snapping on bushes.
+fn skip_berry_bush_waypoints(world: &mut World, grid: &WorldGrid) {
+    let entities: Vec<Entity> = {
+        let mut q = world.query::<(Entity, &Path)>();
+        q.iter(world).map(|(e, _)| e).collect()
+    };
+    for entity in entities {
+        if let Some(mut path) = world.get_mut::<Path>(entity) {
+            while path.index < path.waypoints.len()
+                && is_berry_bush_cell(grid, path.waypoints[path.index])
+            {
+                path.index += 1;
+            }
+        }
+    }
+}
+
+/// Moves colonists whose settled cell is a berry bush to a nearby settleable tile.
+fn eject_colonists_from_bushes(world: &mut World, grid: &WorldGrid) {
+    let occupancy = colonist_occupancy_map(world);
+    let on_bush: Vec<(Entity, (i32, i32))> = {
+        let mut q = world.query::<(Entity, &Position, &Colonist)>();
+        q.iter(world)
+            .filter_map(|(entity, pos, _)| {
+                let cell = pos.grid_cell();
+                if is_berry_bush_cell(grid, cell) {
+                    Some((entity, cell))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
+
+    for (entity, cell) in on_bush {
+        if let (Some(task), Some(pos)) = (world.get::<Task>(entity), world.get::<Position>(entity)) {
+            if colonist_is_building(pos, task) {
+                continue;
+            }
+        }
+        let Some(dest) = find_vacate_cell_after_sleep(grid, cell, cell, &occupancy, entity) else {
+            continue;
+        };
+        if let Some(mut pos) = world.get_mut::<Position>(entity) {
+            pos.x = dest.0 as f32;
+            pos.y = dest.1 as f32;
+        }
+        if let Some(mut path) = world.get_mut::<Path>(entity) {
+            path.clear();
+        }
+    }
+}
+
 pub fn colonist_movement(world: &mut World, grid: &WorldGrid, dt: f32) {
+    lock_building_colonists(world);
+    stabilize_task_stand_holders(world);
+
+    let mut remaining = dt;
+    while remaining > 0.0 {
+        let sub_dt = remaining.min(MOVEMENT_SUBSTEP_DT);
+        colonist_movement_substep(world, grid, sub_dt);
+        remaining -= sub_dt;
+    }
+
+    eject_colonists_from_bushes(world, grid);
+    resolve_colonist_overlaps(world, grid);
+    lock_building_colonists(world);
+    stabilize_task_stand_holders(world);
+}
+
+fn colonist_movement_substep(world: &mut World, grid: &WorldGrid, dt: f32) {
+    skip_berry_bush_waypoints(world, grid);
+
     let step = MOVE_SPEED * dt;
     let mut occupancy = colonist_occupancy_map(world);
 
     let mut snap_intents: Vec<SnapIntent> = Vec::new();
     let mut partial_moves: Vec<(Entity, f32, f32)> = Vec::new();
+    let mut hold_build_stands: Vec<(Entity, i32, i32)> = Vec::new();
 
     {
-        let mut colonists = world.query::<(Entity, &Position, &Path)>();
-        for (entity, pos, path) in colonists.iter(world) {
+        let mut colonists = world.query::<(Entity, &Position, &Path, Option<&Task>)>();
+        for (entity, pos, path, task) in colonists.iter(world) {
+            if let Some(task) = task {
+                if colonist_is_building(pos, task) {
+                    let cell = pos.grid_cell();
+                    hold_build_stands.push((entity, cell.0, cell.1));
+                    continue;
+                }
+            }
             if path.index >= path.waypoints.len() {
                 continue;
             }
 
             let (tx, ty) = path.waypoints[path.index];
+            if is_berry_bush_cell(grid, (tx, ty)) {
+                continue;
+            }
             if !is_cell_free(&occupancy, (tx, ty), entity) {
                 continue;
             }
@@ -873,6 +1183,16 @@ pub fn colonist_movement(world: &mut World, grid: &WorldGrid, dt: f32) {
         }
     }
 
+    for (entity, tx, ty) in hold_build_stands {
+        if let Some(mut pos) = world.get_mut::<Position>(entity) {
+            pos.x = tx as f32;
+            pos.y = ty as f32;
+        }
+        if let Some(mut path) = world.get_mut::<Path>(entity) {
+            path.clear();
+        }
+    }
+
     for (entity, dx, dy) in partial_moves {
         if let Some(mut pos) = world.get_mut::<Position>(entity) {
             pos.x += dx;
@@ -883,7 +1203,9 @@ pub fn colonist_movement(world: &mut World, grid: &WorldGrid, dt: f32) {
     snap_intents.sort_by_key(|intent| intent.entity);
 
     for intent in snap_intents {
-        if !is_cell_free(&occupancy, intent.target, intent.entity) {
+        if is_berry_bush_cell(grid, intent.target)
+            || !is_cell_free(&occupancy, intent.target, intent.entity)
+        {
             continue;
         }
 
@@ -898,8 +1220,6 @@ pub fn colonist_movement(world: &mut World, grid: &WorldGrid, dt: f32) {
             path.index += 1;
         }
     }
-
-    resolve_colonist_overlaps(world, grid);
 }
 
 pub fn task_execution(world: &mut World, grid: &mut WorldGrid, dt: f32) {
@@ -1040,23 +1360,11 @@ fn apply_build_work(world: &mut World, grid: &mut WorldGrid) {
         let mut colonists = world.query::<(Entity, &Position, &Task, &Path)>();
         colonists
             .iter(world)
-            .filter_map(|(entity, pos, task, path)| {
-                if !matches!(task.kind, TaskKind::Build) {
+            .filter_map(|(entity, pos, task, _path)| {
+                if !colonist_is_building(pos, task) {
                     return None;
                 }
-                if path.index < path.waypoints.len() {
-                    return None;
-                }
-                let (gx, gy) = pos.grid_cell();
-                if gx != task.target_x || gy != task.target_y {
-                    return None;
-                }
-                let adjacent =
-                    (gx - task.building_x).abs() + (gy - task.building_y).abs() == 1;
-                if !adjacent {
-                    return None;
-                }
-                Some((entity, gx, gy, task.building_x, task.building_y))
+                Some((entity, pos.grid_cell().0, pos.grid_cell().1, task.building_x, task.building_y))
             })
             .collect()
     };
@@ -2433,6 +2741,524 @@ mod tests {
     }
 
     #[test]
+    fn eat_repaths_when_intermediate_waypoint_blocked() {
+        let mut grid = grass_grid();
+        assert!(grid.place_building(10, 10, BuildingType::BerryBush));
+
+        let mut world = World::new();
+        world.spawn((
+            Building,
+            Position {
+                x: 10.0,
+                y: 10.0,
+            },
+            BuildingType::BerryBush,
+            BerrySupply::new(3),
+        ));
+
+        world.spawn((
+            Colonist,
+            Position { x: 7.0, y: 10.0 },
+            Needs::new_full(),
+            Task::default(),
+            Path::default(),
+        ));
+
+        let eater = world
+            .spawn((
+                Colonist,
+                Position { x: 6.0, y: 10.0 },
+                Needs::new_full(),
+                Task {
+                    kind: TaskKind::Eat,
+                    building_x: 10,
+                    building_y: 10,
+                    target_x: 9,
+                    target_y: 10,
+                },
+                Path {
+                    waypoints: vec![(7, 10), (8, 10), (9, 10)],
+                    index: 0,
+                },
+            ))
+            .id();
+
+        run_auto_assign(&mut world, &grid);
+
+        let path = world.get::<Path>(eater).unwrap();
+        assert_eq!(world.get::<Task>(eater).unwrap().kind, TaskKind::Eat);
+        assert_ne!(path.waypoints, vec![(7, 10), (8, 10), (9, 10)]);
+        assert!(!path.waypoints.is_empty());
+    }
+
+    #[test]
+    fn build_repaths_when_intermediate_waypoint_blocked() {
+        let grid = grass_grid();
+        let mut world = World::new();
+        world.spawn((
+            ConstructionSite {
+                building_type: BuildingType::Wall,
+                work_remaining: 30.0,
+                reserved_by: None,
+            },
+            Position {
+                x: 10.0,
+                y: 10.0,
+            },
+        ));
+
+        world.spawn((
+            Colonist,
+            Position { x: 8.0, y: 10.0 },
+            Needs::new_full(),
+            Task::default(),
+            Path::default(),
+        ));
+
+        let builder = world
+            .spawn((
+                Colonist,
+                Position { x: 7.0, y: 10.0 },
+                Needs::new_full(),
+                Task {
+                    kind: TaskKind::Build,
+                    building_x: 10,
+                    building_y: 10,
+                    target_x: 9,
+                    target_y: 10,
+                },
+                Path {
+                    waypoints: vec![(8, 10), (9, 10)],
+                    index: 0,
+                },
+            ))
+            .id();
+
+        run_auto_assign(&mut world, &grid);
+
+        let path = world.get::<Path>(builder).unwrap();
+        assert_eq!(world.get::<Task>(builder).unwrap().kind, TaskKind::Build);
+        assert_ne!(path.waypoints, vec![(8, 10), (9, 10)]);
+        assert!(!path.waypoints.is_empty());
+    }
+
+    #[test]
+    fn sleep_repaths_when_intermediate_waypoint_blocked() {
+        let mut grid = grass_grid();
+        assert!(grid.place_building(12, 12, BuildingType::Bed));
+
+        let mut world = World::new();
+        world.spawn((
+            Building,
+            Position {
+                x: 12.0,
+                y: 12.0,
+            },
+            BuildingType::Bed,
+            BedOccupancy::default(),
+        ));
+
+        world.spawn((
+            Colonist,
+            Position { x: 11.0, y: 12.0 },
+            Needs::new_full(),
+            Task::default(),
+            Path::default(),
+        ));
+
+        let sleeper = world
+            .spawn((
+                Colonist,
+                Position { x: 10.0, y: 12.0 },
+                Needs::new_full(),
+                Task {
+                    kind: TaskKind::Sleep,
+                    building_x: 12,
+                    building_y: 12,
+                    target_x: 12,
+                    target_y: 12,
+                },
+                Path {
+                    waypoints: vec![(11, 12), (12, 12)],
+                    index: 0,
+                },
+            ))
+            .id();
+
+        run_auto_assign(&mut world, &grid);
+
+        let path = world.get::<Path>(sleeper).unwrap();
+        assert_eq!(world.get::<Task>(sleeper).unwrap().kind, TaskKind::Sleep);
+        assert_ne!(path.waypoints, vec![(11, 12), (12, 12)]);
+        assert!(!path.waypoints.is_empty());
+    }
+
+    #[test]
+    fn eat_task_cleared_when_repath_unreachable() {
+        let mut grid = grass_grid();
+        for y in 0..WORLD_SIZE {
+            grid.terrain[WorldGrid::index(8, y).unwrap()] = TerrainType::Water;
+        }
+        assert!(grid.place_building(10, 10, BuildingType::BerryBush));
+
+        let mut world = World::new();
+        world.spawn((
+            Building,
+            Position {
+                x: 10.0,
+                y: 10.0,
+            },
+            BuildingType::BerryBush,
+            BerrySupply::new(3),
+        ));
+
+        world.spawn((
+            Colonist,
+            Position { x: 6.0, y: 10.0 },
+            Needs::new_full(),
+            Task::default(),
+            Path::default(),
+        ));
+
+        let eater = world
+            .spawn((
+                Colonist,
+                Position { x: 5.0, y: 10.0 },
+                Needs::new_full(),
+                Task {
+                    kind: TaskKind::Eat,
+                    building_x: 10,
+                    building_y: 10,
+                    target_x: 9,
+                    target_y: 10,
+                },
+                Path {
+                    waypoints: vec![(6, 10)],
+                    index: 0,
+                },
+            ))
+            .id();
+
+        run_auto_assign(&mut world, &grid);
+
+        assert_eq!(world.get::<Task>(eater).unwrap().kind, TaskKind::Idle);
+    }
+
+    #[test]
+    fn eat_reassigns_when_goal_stand_occupied() {
+        let mut grid = grass_grid();
+        assert!(grid.place_building(10, 10, BuildingType::BerryBush));
+        assert!(grid.place_building(20, 10, BuildingType::BerryBush));
+
+        let mut world = World::new();
+        for &(bx, by) in &[(10, 10), (20, 10)] {
+            world.spawn((
+                Building,
+                Position {
+                    x: bx as f32,
+                    y: by as f32,
+                },
+                BuildingType::BerryBush,
+                BerrySupply::new(3),
+            ));
+        }
+
+        world.spawn((
+            Colonist,
+            Position { x: 9.0, y: 10.0 },
+            Needs::new_full(),
+            Task::default(),
+            Path::default(),
+        ));
+
+        let eater = world
+            .spawn((
+                Colonist,
+                Position { x: 8.0, y: 10.0 },
+                Needs {
+                    food: NEED_THRESHOLD - 1.0,
+                    sleep: 100.0,
+                },
+                Task {
+                    kind: TaskKind::Eat,
+                    building_x: 10,
+                    building_y: 10,
+                    target_x: 9,
+                    target_y: 10,
+                },
+                Path {
+                    waypoints: vec![(9, 10)],
+                    index: 0,
+                },
+            ))
+            .id();
+
+        run_auto_assign(&mut world, &grid);
+
+        let task = world.get::<Task>(eater).unwrap();
+        assert_eq!(task.kind, TaskKind::Eat);
+        assert_ne!((task.target_x, task.target_y), (9, 10));
+    }
+
+    #[test]
+    fn build_waits_when_goal_stand_occupied() {
+        let grid = grass_grid();
+        let mut world = World::new();
+        world.spawn((
+            ConstructionSite {
+                building_type: BuildingType::Wall,
+                work_remaining: 30.0,
+                reserved_by: None,
+            },
+            Position {
+                x: 10.0,
+                y: 10.0,
+            },
+        ));
+
+        world.spawn((
+            Colonist,
+            Position { x: 9.0, y: 10.0 },
+            Needs::new_full(),
+            Task::default(),
+            Path::default(),
+        ));
+
+        let builder = world
+            .spawn((
+                Colonist,
+                Position { x: 8.0, y: 10.0 },
+                Needs::new_full(),
+                Task {
+                    kind: TaskKind::Build,
+                    building_x: 10,
+                    building_y: 10,
+                    target_x: 9,
+                    target_y: 10,
+                },
+                Path {
+                    waypoints: vec![(9, 10)],
+                    index: 0,
+                },
+            ))
+            .id();
+
+        run_auto_assign(&mut world, &grid);
+
+        let task = world.get::<Task>(builder).unwrap();
+        assert_eq!(task.kind, TaskKind::Build);
+        assert_eq!((task.target_x, task.target_y), (9, 10));
+    }
+
+    #[test]
+    fn build_colonist_holds_position_at_stand() {
+        let mut grid = grass_grid();
+        let mut world = World::new();
+        world.spawn((
+            ConstructionSite {
+                building_type: BuildingType::Wall,
+                work_remaining: 500.0,
+                reserved_by: None,
+            },
+            Position {
+                x: 10.0,
+                y: 10.0,
+            },
+        ));
+
+        let builder = world
+            .spawn((
+                Colonist,
+                Position { x: 9.0, y: 10.0 },
+                Needs::new_full(),
+                Task {
+                    kind: TaskKind::Build,
+                    building_x: 10,
+                    building_y: 10,
+                    target_x: 9,
+                    target_y: 10,
+                },
+                Path::default(),
+            ))
+            .id();
+
+        for _ in 0..30 {
+            run_auto_assign(&mut world, &grid);
+            colonist_movement(&mut world, &grid, 0.05);
+            task_execution(&mut world, &mut grid, 0.05);
+        }
+
+        let pos = world.get::<Position>(builder).unwrap();
+        assert_eq!(pos.grid_cell(), (9, 10));
+        assert_eq!(world.get::<Task>(builder).unwrap().kind, TaskKind::Build);
+    }
+
+    #[test]
+    fn build_colonist_stable_at_high_sim_dt() {
+        let mut grid = grass_grid();
+        let mut world = World::new();
+        world.spawn((
+            ConstructionSite {
+                building_type: BuildingType::Wall,
+                work_remaining: 500.0,
+                reserved_by: None,
+            },
+            Position {
+                x: 10.0,
+                y: 10.0,
+            },
+        ));
+
+        let builder = world
+            .spawn((
+                Colonist,
+                Position { x: 7.0, y: 10.0 },
+                Needs::new_full(),
+                Task {
+                    kind: TaskKind::Build,
+                    building_x: 10,
+                    building_y: 10,
+                    target_x: 9,
+                    target_y: 10,
+                },
+                Path {
+                    waypoints: vec![(8, 10), (9, 10)],
+                    index: 0,
+                },
+            ))
+            .id();
+
+        // dt = 0.5 matches worker BASE_DT * 10x speed.
+        for _ in 0..20 {
+            run_auto_assign(&mut world, &grid);
+            colonist_movement(&mut world, &grid, 0.5);
+            task_execution(&mut world, &mut grid, 0.5);
+        }
+        let pos = world.get::<Position>(builder).unwrap();
+        assert_eq!(
+            pos.grid_cell(),
+            (9, 10),
+            "builder should reach and hold stand at 10x dt"
+        );
+        assert_eq!(world.get::<Task>(builder).unwrap().kind, TaskKind::Build);
+    }
+
+    #[test]
+    fn build_colonist_stays_on_arrival_cell_without_forced_repath() {
+        let mut grid = grass_grid();
+        let mut world = World::new();
+        world.spawn((
+            ConstructionSite {
+                building_type: BuildingType::Wall,
+                work_remaining: 500.0,
+                reserved_by: None,
+            },
+            Position {
+                x: 10.0,
+                y: 10.0,
+            },
+        ));
+
+        let builder = world
+            .spawn((
+                Colonist,
+                Position { x: 10.0, y: 9.0 },
+                Needs::new_full(),
+                Task {
+                    kind: TaskKind::Build,
+                    building_x: 10,
+                    building_y: 10,
+                    target_x: 9,
+                    target_y: 10,
+                },
+                Path {
+                    waypoints: vec![(9, 10)],
+                    index: 0,
+                },
+            ))
+            .id();
+
+        for _ in 0..30 {
+            run_auto_assign(&mut world, &grid);
+            colonist_movement(&mut world, &grid, 0.5);
+            task_execution(&mut world, &mut grid, 0.5);
+        }
+
+        let pos = world.get::<Position>(builder).unwrap();
+        assert_eq!(
+            pos.grid_cell(),
+            (10, 9),
+            "builder should stay on arrival cell, not walk to assigned stand"
+        );
+        assert_eq!(world.get::<Task>(builder).unwrap().kind, TaskKind::Build);
+        let site = world
+            .query::<&ConstructionSite>()
+            .iter(&world)
+            .next()
+            .unwrap();
+        assert!(
+            site.work_remaining < 500.0,
+            "builder should apply work while standing still"
+        );
+    }
+
+    #[test]
+    fn sleep_reassigns_when_goal_bed_occupied() {
+        let mut grid = grass_grid();
+        assert!(grid.place_building(10, 10, BuildingType::Bed));
+        assert!(grid.place_building(20, 10, BuildingType::Bed));
+
+        let mut world = World::new();
+        for &(bx, by) in &[(10, 10), (20, 10)] {
+            world.spawn((
+                Building,
+                Position {
+                    x: bx as f32,
+                    y: by as f32,
+                },
+                BuildingType::Bed,
+                BedOccupancy::default(),
+            ));
+        }
+
+        world.spawn((
+            Colonist,
+            Position { x: 10.0, y: 10.0 },
+            Needs::new_full(),
+            Task::default(),
+            Path::default(),
+        ));
+
+        let sleeper = world
+            .spawn((
+                Colonist,
+                Position { x: 9.0, y: 10.0 },
+                Needs {
+                    food: 100.0,
+                    sleep: NEED_THRESHOLD - 1.0,
+                },
+                Task {
+                    kind: TaskKind::Sleep,
+                    building_x: 10,
+                    building_y: 10,
+                    target_x: 10,
+                    target_y: 10,
+                },
+                Path {
+                    waypoints: vec![(10, 10)],
+                    index: 0,
+                },
+            ))
+            .id();
+
+        run_auto_assign(&mut world, &grid);
+
+        let task = world.get::<Task>(sleeper).unwrap();
+        assert_eq!(task.kind, TaskKind::Sleep);
+        assert_eq!((task.target_x, task.target_y), (20, 10));
+    }
+
+    #[test]
     fn idle_wander_reassigned_when_first_step_blocked() {
         let grid = grass_grid();
         let mut world = World::new();
@@ -2469,6 +3295,80 @@ mod tests {
             "blocked idle wander should be cleared or retargeted, path: {:?}",
             path.waypoints
         );
+    }
+
+    #[test]
+    fn colonist_path_through_bush_does_not_settle_on_bush() {
+        let mut grid = grass_grid();
+        assert!(grid.place_building(10, 10, BuildingType::BerryBush));
+
+        let mut world = World::new();
+        let colonist = world
+            .spawn((
+                Colonist,
+                Position { x: 9.0, y: 10.0 },
+                Path {
+                    waypoints: vec![(10, 10), (11, 10)],
+                    index: 0,
+                },
+            ))
+            .id();
+
+        for _ in 0..50 {
+            colonist_movement(&mut world, &grid, 0.1);
+            let cell = world.get::<Position>(colonist).unwrap().grid_cell();
+            assert_ne!(cell, (10, 10), "colonist must not settle on bush");
+        }
+
+        let final_cell = world.get::<Position>(colonist).unwrap().grid_cell();
+        assert!(!is_berry_bush_cell(&grid, final_cell));
+    }
+
+    #[test]
+    fn colonist_ejected_when_standing_on_bush() {
+        let mut grid = grass_grid();
+        assert!(grid.place_building(10, 10, BuildingType::BerryBush));
+
+        let mut world = World::new();
+        let colonist = world
+            .spawn((
+                Colonist,
+                Position { x: 10.0, y: 10.0 },
+                Path::default(),
+            ))
+            .id();
+
+        colonist_movement(&mut world, &grid, 0.05);
+
+        assert_ne!(world.get::<Position>(colonist).unwrap().grid_cell(), (10, 10));
+    }
+
+    #[test]
+    fn wander_target_never_on_bush_cell() {
+        let mut grid = grass_grid();
+        for &(x, y) in &[(15, 10), (15, 11), (15, 9), (14, 10), (16, 10)] {
+            assert!(grid.place_building(x, y, BuildingType::BerryBush));
+        }
+
+        let mut world = World::new();
+        let colonist = world
+            .spawn((
+                Colonist,
+                Position { x: 10.0, y: 10.0 },
+                Path::default(),
+            ))
+            .id();
+
+        let occupancy = colonist_occupancy_map(&mut world);
+        for _ in 0..32 {
+            if let Some(waypoints) = pick_wander_target(&grid, (10, 10), &occupancy, colonist) {
+                let dest = waypoints.last().copied().unwrap();
+                assert!(
+                    !is_berry_bush_cell(&grid, dest),
+                    "wander destination must not be a bush cell"
+                );
+            }
+        }
     }
 
     #[test]

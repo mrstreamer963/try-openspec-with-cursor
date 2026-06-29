@@ -12,8 +12,8 @@ use crate::events::{
     StateSnapshot, TileSnapshot,
 };
 use crate::systems::{
-    auto_assign_tasks, colonist_movement, is_valid_build_tile, needs_decay, spawn_colonists,
-    task_execution, update_need_buffs,
+    auto_assign_tasks, colonist_at_task_stand, colonist_movement, is_valid_build_tile,
+    needs_decay, spawn_colonists, task_execution, update_need_buffs,
 };
 use crate::world::{generate_world, WorldGrid, WORLD_SIZE};
 
@@ -288,11 +288,12 @@ impl Game {
                 &Position,
                 &Needs,
                 &Task,
+                &Path,
                 Option<&Hungry>,
                 Option<&WantsSleep>,
             )>()
             .iter(&self.world)
-            .map(|(id, name, pos, needs, task, hungry, wants_sleep)| ColonistSnapshot {
+            .map(|(id, name, pos, needs, task, path, hungry, wants_sleep)| ColonistSnapshot {
                 id: id.0,
                 name: name.0.clone(),
                 x: pos.x,
@@ -302,6 +303,7 @@ impl Game {
                 hungry: hungry.is_some(),
                 wants_sleep: wants_sleep.is_some(),
                 task: task.kind,
+                at_task_stand: colonist_at_task_stand(pos, task, path),
             })
             .collect();
 

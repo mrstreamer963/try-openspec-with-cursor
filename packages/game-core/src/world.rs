@@ -109,6 +109,8 @@ pub const NEED_RESTORE: f32 = 100.0;
 pub const FOOD_DECAY_PER_SEC: f32 = 2.0;
 pub const SLEEP_DECAY_PER_SEC: f32 = 1.5;
 pub const MOVE_SPEED: f32 = 4.0;
+/// Movement is integrated in fixed substeps so speed multipliers do not overshoot tiles.
+pub const MOVEMENT_SUBSTEP_DT: f32 = 0.05;
 pub const WANDER_MIN_RADIUS: i32 = 3;
 pub const WANDER_RADIUS: i32 = 10;
 pub const WANDER_PICK_ATTEMPTS: usize = 8;
