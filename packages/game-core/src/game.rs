@@ -72,7 +72,7 @@ impl Game {
         needs_decay(&mut self.world, dt);
         update_need_buffs(&mut self.world);
         auto_assign_tasks(&mut self.world, &self.grid);
-        colonist_movement(&mut self.world, dt);
+        colonist_movement(&mut self.world, &self.grid, dt);
         task_execution(&mut self.world, &mut self.grid, dt);
 
         self.snapshot_json()

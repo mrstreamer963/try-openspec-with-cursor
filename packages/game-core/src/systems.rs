@@ -299,6 +299,7 @@ pub fn auto_assign_tasks(world: &mut World, grid: &WorldGrid) {
     let occupancy = colonist_occupancy_map(world);
     release_unreachable_eat_tasks(world, grid, &occupancy);
     let prefer_sleep_first = release_stuck_tasks(world);
+    release_blocked_idle_wander(world);
 
     let berry_bushes: Vec<(i32, i32)> = {
         let mut q = world.query::<(&Position, &BuildingType, Option<&BerrySupply>)>();
@@ -602,6 +603,34 @@ fn release_stuck_tasks(world: &mut World) -> HashSet<Entity> {
     prefer_sleep_first
 }
 
+/// Clears wander paths for idle colonists blocked on the next waypoint so
+/// `auto_assign_tasks` can pick a new destination.
+fn release_blocked_idle_wander(world: &mut World) {
+    let occupancy = colonist_occupancy_map(world);
+    let blocked: Vec<Entity> = {
+        let mut q = world.query::<(Entity, &Task, &Path)>();
+        q.iter(world)
+            .filter_map(|(entity, task, path)| {
+                if task.kind != TaskKind::Idle || path.index >= path.waypoints.len() {
+                    return None;
+                }
+                let (tx, ty) = path.waypoints[path.index];
+                if is_cell_free(&occupancy, (tx, ty), entity) {
+                    None
+                } else {
+                    Some(entity)
+                }
+            })
+            .collect()
+    };
+
+    for entity in blocked {
+        if let Some(mut path) = world.get_mut::<Path>(entity) {
+            path.clear();
+        }
+    }
+}
+
 fn nearest_build_assignment(
     grid: &WorldGrid,
     from: (i32, i32),
@@ -758,7 +787,46 @@ fn find_vacate_cell_after_sleep(
     None
 }
 
-pub fn colonist_movement(world: &mut World, dt: f32) {
+/// Separates colonists sharing a grid cell (can happen after partial movement).
+fn resolve_colonist_overlaps(world: &mut World, grid: &WorldGrid) {
+    loop {
+        let occupancy = colonist_occupancy_map(world);
+        let mut by_cell: HashMap<(i32, i32), Vec<Entity>> = HashMap::new();
+        let mut q = world.query::<(Entity, &Position, &Colonist)>();
+        for (entity, pos, _) in q.iter(world) {
+            by_cell.entry(pos.grid_cell()).or_default().push(entity);
+        }
+
+        let mut to_relocate: Option<(Entity, (i32, i32))> = None;
+        for (cell, mut entities) in by_cell {
+            if entities.len() <= 1 {
+                continue;
+            }
+            entities.sort_by_key(|e| e.to_bits());
+            let entity = entities[1];
+            if let Some(dest) =
+                find_vacate_cell_after_sleep(grid, cell, cell, &occupancy, entity)
+            {
+                to_relocate = Some((entity, dest));
+                break;
+            }
+        }
+
+        let Some((entity, dest)) = to_relocate else {
+            break;
+        };
+
+        if let Some(mut pos) = world.get_mut::<Position>(entity) {
+            pos.x = dest.0 as f32;
+            pos.y = dest.1 as f32;
+        }
+        if let Some(mut path) = world.get_mut::<Path>(entity) {
+            path.clear();
+        }
+    }
+}
+
+pub fn colonist_movement(world: &mut World, grid: &WorldGrid, dt: f32) {
     let step = MOVE_SPEED * dt;
     let mut occupancy = colonist_occupancy_map(world);
 
@@ -790,7 +858,17 @@ pub fn colonist_movement(world: &mut World, dt: f32) {
                     target_y,
                 });
             } else {
-                partial_moves.push((entity, (dx / dist) * step, (dy / dist) * step));
+                let move_dx = (dx / dist) * step;
+                let move_dy = (dy / dist) * step;
+                let old_cell = pos.grid_cell();
+                let new_cell = (
+                    (pos.x + move_dx).floor() as i32,
+                    (pos.y + move_dy).floor() as i32,
+                );
+                if new_cell != old_cell && !is_cell_free(&occupancy, new_cell, entity) {
+                    continue;
+                }
+                partial_moves.push((entity, move_dx, move_dy));
             }
         }
     }
@@ -820,6 +898,8 @@ pub fn colonist_movement(world: &mut World, dt: f32) {
             path.index += 1;
         }
     }
+
+    resolve_colonist_overlaps(world, grid);
 }
 
 pub fn task_execution(world: &mut World, grid: &mut WorldGrid, dt: f32) {
@@ -1095,7 +1175,7 @@ mod tests {
         task_execution(world, grid, SLEEP_ON_BED_SEC);
         for _ in 0..64 {
             if world.get::<Position>(colonist).unwrap().grid_cell() == bed {
-                colonist_movement(world, 0.05);
+                colonist_movement(world, grid, 0.05);
             } else {
                 break;
             }
@@ -1469,7 +1549,7 @@ mod tests {
         world.entity_mut(colonist).insert(SleepingOnBed { remaining: 0.0 });
         task_execution(&mut world, &mut grid, SLEEP_ON_BED_SEC);
         for _ in 0..64 {
-            colonist_movement(&mut world, 0.05);
+            colonist_movement(&mut world, &grid, 0.05);
         }
 
         assert_eq!(world.get::<Position>(colonist).unwrap().grid_cell(), (12, 12));
@@ -1599,7 +1679,7 @@ mod tests {
 
     #[test]
     fn second_colonist_waits_when_snap_target_occupied() {
-        let _grid = grass_grid();
+        let grid = grass_grid();
         let mut world = World::new();
 
         let blocker = world
@@ -1624,7 +1704,7 @@ mod tests {
             ))
             .id();
 
-        colonist_movement(&mut world, 0.25);
+        colonist_movement(&mut world, &grid, 0.25);
 
         let blocker_cell = world.get::<Position>(blocker).unwrap().grid_cell();
         let waiter_cell = world.get::<Position>(waiter).unwrap().grid_cell();
@@ -1635,7 +1715,7 @@ mod tests {
 
     #[test]
     fn colonists_partial_step_without_snap_blocking() {
-        let _grid = grass_grid();
+        let grid = grass_grid();
         let mut world = World::new();
 
         world.spawn((
@@ -1656,7 +1736,7 @@ mod tests {
             },
         ));
 
-        colonist_movement(&mut world, 0.01);
+        colonist_movement(&mut world, &grid, 0.01);
 
         let indices: Vec<_> = world
             .query::<(&Path, &Colonist)>()
@@ -2323,7 +2403,7 @@ mod tests {
         for _ in 0..200 {
             update_need_buffs(&mut world);
             auto_assign_tasks(&mut world, &grid);
-            colonist_movement(&mut world, 0.05);
+            colonist_movement(&mut world, &grid, 0.05);
         }
 
         let mut stuck = Vec::new();
@@ -2350,5 +2430,71 @@ mod tests {
             "colonists stuck at spawn with active wander path: {:?}",
             stuck
         );
+    }
+
+    #[test]
+    fn idle_wander_reassigned_when_first_step_blocked() {
+        let grid = grass_grid();
+        let mut world = World::new();
+
+        world.spawn((
+            Colonist,
+            Position { x: 9.0, y: 10.0 },
+            Path::default(),
+        ));
+
+        let blocked = world
+            .spawn((
+                Colonist,
+                Position { x: 10.0, y: 10.0 },
+                Needs::new_full(),
+                Task::default(),
+                Path {
+                    waypoints: vec![(9, 10)],
+                    index: 0,
+                },
+            ))
+            .id();
+
+        for _ in 0..30 {
+            run_auto_assign(&mut world, &grid);
+            colonist_movement(&mut world, &grid, 0.05);
+        }
+
+        let path = world.get::<Path>(blocked).unwrap();
+        let still_blocked = path.index < path.waypoints.len()
+            && path.waypoints[path.index] == (9, 10);
+        assert!(
+            !still_blocked,
+            "blocked idle wander should be cleared or retargeted, path: {:?}",
+            path.waypoints
+        );
+    }
+
+    #[test]
+    fn overlapping_colonists_separated_after_movement() {
+        let grid = grass_grid();
+        let mut world = World::new();
+
+        let a = world
+            .spawn((
+                Colonist,
+                Position { x: 10.0, y: 10.0 },
+                Path::default(),
+            ))
+            .id();
+        let b = world
+            .spawn((
+                Colonist,
+                Position { x: 10.4, y: 10.4 },
+                Path::default(),
+            ))
+            .id();
+
+        colonist_movement(&mut world, &grid, 0.01);
+
+        let cell_a = world.get::<Position>(a).unwrap().grid_cell();
+        let cell_b = world.get::<Position>(b).unwrap().grid_cell();
+        assert_ne!(cell_a, cell_b, "colonists must not share a grid cell");
     }
 }
