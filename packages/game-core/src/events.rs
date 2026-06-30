@@ -46,6 +46,14 @@ pub struct ColonistSnapshot {
     pub hungry: bool,
     pub wants_sleep: bool,
     pub task: TaskKind,
+    #[serde(default)]
+    pub building_x: i32,
+    #[serde(default)]
+    pub building_y: i32,
+    #[serde(default)]
+    pub target_x: i32,
+    #[serde(default)]
+    pub target_y: i32,
     /// True when the colonist has reached the task stand and finished walking.
     #[serde(default)]
     pub at_task_stand: bool,

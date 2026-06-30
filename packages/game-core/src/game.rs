@@ -254,7 +254,10 @@ impl Game {
                 needs,
                 Task {
                     kind: colonist.task,
-                    ..Task::default()
+                    building_x: colonist.building_x,
+                    building_y: colonist.building_y,
+                    target_x: colonist.target_x,
+                    target_y: colonist.target_y,
                 },
                 Path::default(),
                 ActiveStatuses::default(),
@@ -360,6 +363,10 @@ impl Game {
                 hungry: statuses.has(self.content.hungry_status),
                 wants_sleep: statuses.has(self.content.wants_sleep_status),
                 task: task.kind,
+                building_x: task.building_x,
+                building_y: task.building_y,
+                target_x: task.target_x,
+                target_y: task.target_y,
                 at_task_stand: colonist_at_task_stand(pos, task, path),
             })
             .collect();
@@ -628,7 +635,61 @@ mod tests {
             assert_eq!(a.hungry, b.hungry);
             assert_eq!(a.wants_sleep, b.wants_sleep);
             assert_eq!(a.task, b.task);
+            assert_eq!(a.building_x, b.building_x);
+            assert_eq!(a.building_y, b.building_y);
+            assert_eq!(a.target_x, b.target_x);
+            assert_eq!(a.target_y, b.target_y);
         }
+    }
+
+    #[test]
+    fn load_state_preserves_active_task_coordinates() {
+        let mut game = test_game();
+
+        {
+            let mut q = game.world.query::<&mut Task>();
+            for mut task in q.iter_mut(&mut game.world) {
+                *task = Task {
+                    kind: TaskKind::Eat,
+                    building_x: 10,
+                    building_y: 12,
+                    target_x: 9,
+                    target_y: 12,
+                };
+                break;
+            }
+        }
+
+        let json = game.get_snapshot();
+        let event: OutgoingEvent = serde_json::from_str(&json).unwrap();
+        let OutgoingEvent::StateSnapshot(original) = event else {
+            panic!("expected state snapshot");
+        };
+
+        let eater = original
+            .colonists
+            .iter()
+            .find(|c| c.task == TaskKind::Eat)
+            .expect("colonist with eat task");
+        assert_eq!(eater.building_x, 10);
+        assert_eq!(eater.building_y, 12);
+        assert_eq!(eater.target_x, 9);
+        assert_eq!(eater.target_y, 12);
+
+        let load_json =
+            serde_json::to_string(&IncomingEvent::LoadState {
+                state: original.clone(),
+            })
+            .unwrap();
+        let err = game.handle_event(&load_json);
+        assert!(err.is_empty(), "load should succeed: {err}");
+
+        let mut q = game.world.query::<&Task>();
+        let restored = q.iter(&game.world).find(|t| t.kind == TaskKind::Eat).unwrap();
+        assert_eq!(restored.building_x, 10);
+        assert_eq!(restored.building_y, 12);
+        assert_eq!(restored.target_x, 9);
+        assert_eq!(restored.target_y, 12);
     }
 
     #[test]

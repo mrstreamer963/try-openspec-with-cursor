@@ -109,6 +109,10 @@ export interface ColonistSnapshot {
   hungry: boolean;
   wants_sleep: boolean;
   task: TaskKind;
+  building_x?: number;
+  building_y?: number;
+  target_x?: number;
+  target_y?: number;
   at_task_stand?: boolean;
 }
 
