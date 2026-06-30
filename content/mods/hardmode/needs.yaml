@@ -1,0 +1,7 @@
+# Demo mod: faster food decay. Copy full entry from base when overriding.
+needs:
+  - id: food
+    label: Food
+    max: 100
+    decay_per_sec: 4.0
+    critical_threshold: 50

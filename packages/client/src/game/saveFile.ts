@@ -13,18 +13,28 @@ export const SAVE_ID_MIGRATION_NOTE =
 export interface SaveFile {
   version: number;
   saved_at: string;
+  content_mods?: string[];
   state: StateSnapshot;
 }
 
-export function buildSaveFile(snapshot: StateSnapshot): SaveFile {
-  return {
+export interface ValidatedSave {
+  state: StateSnapshot;
+  content_mods?: string[];
+}
+
+export function buildSaveFile(snapshot: StateSnapshot, modIds?: string[]): SaveFile {
+  const file: SaveFile = {
     version: SAVE_VERSION,
     saved_at: new Date().toISOString(),
     state: snapshot,
   };
+  if (modIds && modIds.length > 0) {
+    file.content_mods = modIds;
+  }
+  return file;
 }
 
-export function validateSaveFile(raw: unknown): StateSnapshot | string {
+export function validateSaveFile(raw: unknown): ValidatedSave | string {
   if (typeof raw !== 'object' || raw === null) {
     return 'Save file must be a JSON object';
   }
@@ -37,6 +47,12 @@ export function validateSaveFile(raw: unknown): StateSnapshot | string {
 
   if (typeof file.saved_at !== 'string') {
     return 'Save file is missing saved_at timestamp';
+  }
+
+  if (file.content_mods !== undefined) {
+    if (!Array.isArray(file.content_mods) || !file.content_mods.every((m) => typeof m === 'string')) {
+      return 'Save file content_mods must be an array of strings';
+    }
   }
 
   const state = file.state;
@@ -73,7 +89,10 @@ export function validateSaveFile(raw: unknown): StateSnapshot | string {
     return 'Save state is missing valid speed';
   }
 
-  return snapshot as unknown as StateSnapshot;
+  return {
+    state: snapshot as unknown as StateSnapshot,
+    content_mods: file.content_mods as string[] | undefined,
+  };
 }
 
 export function downloadSaveFile(saveFile: SaveFile): void {
@@ -86,4 +105,16 @@ export function downloadSaveFile(saveFile: SaveFile): void {
   anchor.download = `colony-save-${date}.json`;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+export function modListsEqual(a: string[] | undefined, b: string[]): boolean {
+  const left = a ?? ['base'];
+  if (left.length !== b.length) return false;
+  return left.every((id, i) => id === b[i]);
+}
+
+export function formatModMismatchMessage(saveMods: string[] | undefined, currentMods: string[]): string {
+  const saved = (saveMods ?? ['base']).join(', ');
+  const current = currentMods.join(', ');
+  return `This save was created with mods: [${saved}]. Current mods: [${current}]. Load anyway?`;
 }

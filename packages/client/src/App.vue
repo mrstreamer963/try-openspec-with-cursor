@@ -6,10 +6,16 @@ import Toolbar from './components/Toolbar.vue';
 import ColonistInfo from './components/ColonistInfo.vue';
 import { GameManager } from './game/GameManager';
 import { PixiRenderer } from './game/PixiRenderer';
-import { buildSaveFile, downloadSaveFile, validateSaveFile } from './game/saveFile';
+import {
+  buildSaveFile,
+  downloadSaveFile,
+  formatModMismatchMessage,
+  modListsEqual,
+  validateSaveFile,
+} from './game/saveFile';
 import type { ColonistSnapshot, StateSnapshot, ToolMode } from './game/types';
 import { SPEED_PRESETS } from './speedPresets';
-import { contentPackToJson, loadBaseContent } from './content/loadBaseContent';
+import { contentPackToJson, loadContent } from './content/loadBaseContent';
 import { contentPackKey } from './content/injection';
 import type { ContentPack } from './content/types';
 
@@ -18,6 +24,7 @@ const loadInput = useTemplateRef<HTMLInputElement>('loadInput');
 const loading = ref(true);
 const loadError = ref<string | null>(null);
 const contentPack = shallowRef<ContentPack | null>(null);
+const activeModIds = ref<string[]>(['base']);
 provide(contentPackKey, contentPack);
 const contentReady = ref(false);
 const paused = ref(false);
@@ -66,7 +73,9 @@ onMounted(async () => {
   let contentJson: string;
   let pack: ContentPack;
   try {
-    pack = await loadBaseContent();
+    const loaded = await loadContent();
+    pack = loaded.pack;
+    activeModIds.value = loaded.modIds;
     contentPack.value = pack;
     contentReady.value = true;
     contentJson = contentPackToJson(pack);
@@ -154,7 +163,7 @@ function saveGame(): void {
     showStatus('No game state available to save', true);
     return;
   }
-  downloadSaveFile(buildSaveFile(snapshot));
+  downloadSaveFile(buildSaveFile(snapshot, activeModIds.value));
   showStatus('Game saved');
 }
 
@@ -182,7 +191,14 @@ async function onLoadFileSelected(event: Event): Promise<void> {
     return;
   }
 
-  gameManager?.sendEvent({ type: 'load_state', state: result });
+  if (!modListsEqual(result.content_mods, activeModIds.value)) {
+    const ok = window.confirm(
+      formatModMismatchMessage(result.content_mods, activeModIds.value),
+    );
+    if (!ok) return;
+  }
+
+  gameManager?.sendEvent({ type: 'load_state', state: result.state });
   showStatus('Game loaded');
 }
 </script>
