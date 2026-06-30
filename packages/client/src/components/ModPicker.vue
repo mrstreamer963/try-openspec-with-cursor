@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import type { ModCatalogEntry } from '../content/modCatalog';
-import { getResources } from '../resources';
-import { hasDesktopHost } from '../desktop';
 
 const props = defineProps<{
   catalog: ModCatalogEntry[];
@@ -48,10 +46,6 @@ function apply(): void {
   const mods = ['base', ...toggled.value.filter((m) => m !== 'base')];
   emit('apply', mods);
 }
-
-async function openModsFolder(): Promise<void> {
-  await getResources().revealInFileManager('data', 'mods');
-}
 </script>
 
 <template>
@@ -74,7 +68,6 @@ async function openModsFolder(): Promise<void> {
       </ul>
       <p class="hint">Mod changes apply to the next game session.</p>
       <div class="actions">
-        <button v-if="hasDesktopHost()" class="btn" @click="openModsFolder">Open Mods Folder</button>
         <button class="btn primary" @click="apply">Apply</button>
         <button class="btn" @click="emit('back')">Back</button>
       </div>

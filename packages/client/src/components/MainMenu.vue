@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { hasDesktopHost } from '../desktop';
-
 defineProps<{
   canContinue: boolean;
 }>();
@@ -10,7 +8,6 @@ const emit = defineEmits<{
   newGame: [];
   loadGame: [];
   mods: [];
-  quit: [];
 }>();
 </script>
 
@@ -24,7 +21,6 @@ const emit = defineEmits<{
       <button class="btn" @click="emit('newGame')">New Game</button>
       <button class="btn" @click="emit('loadGame')">Load Game</button>
       <button class="btn" @click="emit('mods')">Mods</button>
-      <button v-if="hasDesktopHost()" class="btn" @click="emit('quit')">Quit</button>
     </div>
   </div>
 </template>

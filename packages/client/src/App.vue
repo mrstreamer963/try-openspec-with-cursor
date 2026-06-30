@@ -5,7 +5,6 @@ import MainMenu from './components/MainMenu.vue';
 import ModPicker from './components/ModPicker.vue';
 import LoadGameScreen from './components/LoadGameScreen.vue';
 import GameSession from './components/GameSession.vue';
-import { getDesktopHost, hasDesktopHost } from './desktop';
 import { discoverModCatalog, type ModCatalogEntry } from './content/modCatalog';
 import { clearContentCache, loadContent } from './content/loadContent';
 import { contentPackToJson } from './content/loadBaseContent';
@@ -36,7 +35,6 @@ const gameSessionRef = useTemplateRef<InstanceType<typeof GameSession>>('gameSes
 
 let statusTimeout: ReturnType<typeof setTimeout> | null = null;
 let autosaveTimer: ReturnType<typeof setInterval> | null = null;
-const unlisteners: Array<() => void> = [];
 
 function showStatus(message: string, isError = false): void {
   statusMessage.value = isError ? `Error: ${message}` : message;
@@ -59,21 +57,11 @@ onMounted(async () => {
   settings.value = await loadSettings();
   await refreshCatalog();
   await refreshAutosaveFlag();
-
-  const host = getDesktopHost();
-  if (host) {
-    const cleanup = await host.setup({
-      onMenuAction: handleMenuAction,
-      onCloseRequested: handleCloseRequested,
-    });
-    unlisteners.push(cleanup);
-  }
 });
 
 onUnmounted(() => {
   if (statusTimeout) clearTimeout(statusTimeout);
   stopAutosaveTimer();
-  unlisteners.forEach((fn) => fn());
 });
 
 function stopAutosaveTimer(): void {
@@ -208,29 +196,21 @@ async function applyModSettings(enabledMods: string[]): Promise<void> {
   showStatus('Mod settings saved');
 }
 
-async function quitApp(): Promise<void> {
-  await getDesktopHost()?.quit();
-}
-
-async function handleCloseRequested(): Promise<void> {
+async function requestClose(): Promise<boolean> {
   if (screen.value !== 'playing' || !dirty.value) {
-    if (hasDesktopHost()) await quitApp();
-    return;
+    return true;
   }
 
   const choice = await getUi().quitGuard();
-  if (choice === 'cancel') return;
+  if (choice === 'cancel') return false;
   if (choice === 'save') {
     await gameSessionRef.value?.saveAutosave();
-    if (hasDesktopHost()) await quitApp();
-    return;
   }
-  if (hasDesktopHost()) await quitApp();
+  return true;
 }
 
 function handleMenuAction(action: string): void {
   if (screen.value !== 'playing') {
-    if (action === 'quit') void handleCloseRequested();
     if (action === 'mods-manage') screen.value = 'mods';
     if (action === 'mods-open-folder') void getResources().revealInFileManager('data', 'mods');
     return;
@@ -246,9 +226,6 @@ function handleMenuAction(action: string): void {
     case 'export':
       void gameSessionRef.value?.exportSave();
       break;
-    case 'quit':
-      void handleCloseRequested();
-      break;
     case 'mods-manage':
       void quitToMenu().then(() => { screen.value = 'mods'; });
       break;
@@ -257,6 +234,11 @@ function handleMenuAction(action: string): void {
       break;
   }
 }
+
+defineExpose({
+  requestClose,
+  handleMenuAction,
+});
 
 function onDirtyChange(value: boolean): void {
   dirty.value = value;
@@ -281,7 +263,6 @@ function backFromLoading(): void {
     @new-game="startNewGame"
     @load-game="screen = 'load-game'"
     @mods="screen = 'mods'"
-    @quit="handleCloseRequested"
   />
 
   <ModPicker

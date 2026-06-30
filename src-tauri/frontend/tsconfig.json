@@ -19,5 +19,5 @@
       "@idle-colony/client/*": ["../../packages/client/src/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts"]
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue"]
 }
