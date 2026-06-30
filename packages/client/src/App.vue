@@ -1,42 +1,42 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, provide, ref, shallowRef, useTemplateRef } from 'vue';
+import { onMounted, onUnmounted, ref, shallowRef, useTemplateRef } from 'vue';
 import LoadingScreen from './components/LoadingScreen.vue';
-import Hud from './components/Hud.vue';
-import Toolbar from './components/Toolbar.vue';
-import ColonistInfo from './components/ColonistInfo.vue';
-import { GameManager } from './game/GameManager';
-import { PixiRenderer } from './game/PixiRenderer';
-import {
-  buildSaveFile,
-  downloadSaveFile,
-  formatModMismatchMessage,
-  modListsEqual,
-  validateSaveFile,
-} from './game/saveFile';
-import type { ColonistSnapshot, StateSnapshot, ToolMode } from './game/types';
-import { SPEED_PRESETS } from './speedPresets';
-import { contentPackToJson, loadContent } from './content/loadBaseContent';
-import { contentPackKey } from './content/injection';
+import MainMenu from './components/MainMenu.vue';
+import ModPicker from './components/ModPicker.vue';
+import LoadGameScreen from './components/LoadGameScreen.vue';
+import GameSession from './components/GameSession.vue';
+import { getDesktopHost, hasDesktopHost } from './desktop';
+import { discoverModCatalog, type ModCatalogEntry } from './content/modCatalog';
+import { clearContentCache, loadContent } from './content/loadContent';
+import { contentPackToJson } from './content/loadBaseContent';
+import { validateSaveFile, type ValidatedSave } from './game/saveFile';
+import { resolveModMismatch } from './game/loadFlow';
+import type { StateSnapshot } from './game/types';
+import { getResources, readSave, type SaveId } from './resources';
+import { getUi } from './ui';
+import { loadSettings, saveSettings } from './settings/settings';
+import { DEFAULT_SETTINGS, type AppSettings } from './settings/types';
 import type { ContentPack } from './content/types';
 
-const canvasMount = ref<HTMLElement | null>(null);
-const loadInput = useTemplateRef<HTMLInputElement>('loadInput');
-const loading = ref(true);
-const loadError = ref<string | null>(null);
-const contentPack = shallowRef<ContentPack | null>(null);
-const activeModIds = ref<string[]>(['base']);
-provide(contentPackKey, contentPack);
-const contentReady = ref(false);
-const paused = ref(false);
-const speed = ref(1);
-const toolMode = ref<ToolMode>(null);
-const selectedColonist = ref<ColonistSnapshot | null>(null);
-const latestSnapshot = shallowRef<StateSnapshot | null>(null);
-const statusMessage = ref<string | null>(null);
+type AppScreen = 'menu' | 'mods' | 'load-game' | 'loading' | 'playing';
 
-let gameManager: GameManager | null = null;
-let renderer: PixiRenderer | null = null;
+const screen = ref<AppScreen>('menu');
+const settings = ref<AppSettings>({ ...DEFAULT_SETTINGS });
+const hasAutosave = ref(false);
+const loadError = ref<string | null>(null);
+const catalog = ref<ModCatalogEntry[]>([]);
+const contentPack = shallowRef<ContentPack | null>(null);
+const contentJson = ref('');
+const sessionModIds = ref<string[]>(['base']);
+const initialState = ref<StateSnapshot | null>(null);
+const sessionKey = ref(0);
+const dirty = ref(false);
+const statusMessage = ref<string | null>(null);
+const gameSessionRef = useTemplateRef<InstanceType<typeof GameSession>>('gameSession');
+
 let statusTimeout: ReturnType<typeof setTimeout> | null = null;
+let autosaveTimer: ReturnType<typeof setInterval> | null = null;
+const unlisteners: Array<() => void> = [];
 
 function showStatus(message: string, isError = false): void {
   statusMessage.value = isError ? `Error: ${message}` : message;
@@ -46,195 +46,285 @@ function showStatus(message: string, isError = false): void {
   }, isError ? 6000 : 3000);
 }
 
-function onKeyDown(event: KeyboardEvent): void {
-  if (loading.value) return;
+async function refreshAutosaveFlag(): Promise<void> {
+  const save = await readSave(getResources(), 'autosave');
+  hasAutosave.value = save !== null;
+}
 
-  if (event.code === 'Space') {
-    event.preventDefault();
-    togglePause();
-    return;
-  }
-
-  const speedByKey: Record<string, number> = {
-    '1': SPEED_PRESETS[0],
-    '2': SPEED_PRESETS[1],
-    '3': SPEED_PRESETS[2],
-  };
-  const preset = speedByKey[event.key];
-  if (preset !== undefined) {
-    setSpeed(preset);
-  }
+async function refreshCatalog(): Promise<void> {
+  catalog.value = await discoverModCatalog(getResources());
 }
 
 onMounted(async () => {
-  window.addEventListener('keydown', onKeyDown);
-  if (!canvasMount.value) return;
+  settings.value = await loadSettings();
+  await refreshCatalog();
+  await refreshAutosaveFlag();
 
-  let contentJson: string;
-  let pack: ContentPack;
-  try {
-    const loaded = await loadContent();
-    pack = loaded.pack;
-    activeModIds.value = loaded.modIds;
-    contentPack.value = pack;
-    contentReady.value = true;
-    contentJson = contentPackToJson(pack);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    loadError.value = message;
-    loading.value = true;
-    return;
+  const host = getDesktopHost();
+  if (host) {
+    const cleanup = await host.setup({
+      onMenuAction: handleMenuAction,
+      onCloseRequested: handleCloseRequested,
+    });
+    unlisteners.push(cleanup);
   }
-
-  gameManager = new GameManager();
-
-  gameManager.onReady(() => {
-    loading.value = false;
-  });
-
-  gameManager.onError((msg) => {
-    console.error('Worker error:', msg);
-    showStatus(msg, true);
-    loading.value = false;
-  });
-
-  gameManager.onSnapshot((snapshot) => {
-    latestSnapshot.value = snapshot;
-    paused.value = snapshot.paused;
-    speed.value = snapshot.speed;
-    renderer?.updateSnapshot(snapshot);
-    if (selectedColonist.value) {
-      const updated = snapshot.colonists.find((c) => c.id === selectedColonist.value!.id);
-      selectedColonist.value = updated ?? null;
-    }
-  });
-
-  gameManager.start(contentJson);
-
-  renderer = new PixiRenderer(canvasMount.value, pack);
-  await renderer.init();
-
-  renderer.setOnSceneClick((click) => {
-    if (click.kind === 'colonist') {
-      selectedColonist.value = click.colonist;
-      return;
-    }
-    selectedColonist.value = null;
-    if (toolMode.value === 'deconstruct') {
-      gameManager?.sendEvent({
-        type: 'deconstruct',
-        x: click.x,
-        y: click.y,
-      });
-    } else if (toolMode.value) {
-      gameManager?.sendEvent({
-        type: 'build',
-        building: toolMode.value,
-        x: click.x,
-        y: click.y,
-      });
-    }
-  });
-
-  renderer.startRenderLoop(() => {
-    renderer?.renderFrame();
-  });
 });
 
 onUnmounted(() => {
-  window.removeEventListener('keydown', onKeyDown);
   if (statusTimeout) clearTimeout(statusTimeout);
-  gameManager?.destroy();
-  renderer?.destroy();
+  stopAutosaveTimer();
+  unlisteners.forEach((fn) => fn());
 });
 
-function togglePause(): void {
-  const next = !paused.value;
-  gameManager?.sendEvent({ type: 'set_paused', paused: next });
+function stopAutosaveTimer(): void {
+  if (autosaveTimer) {
+    clearInterval(autosaveTimer);
+    autosaveTimer = null;
+  }
 }
 
-function setSpeed(s: number): void {
-  gameManager?.sendEvent({ type: 'set_speed', multiplier: s });
+function startAutosaveTimer(): void {
+  stopAutosaveTimer();
+  if (!settings.value.autosave.enabled) return;
+  const ms = settings.value.autosave.interval_minutes * 60 * 1000;
+  autosaveTimer = setInterval(() => {
+    if (screen.value === 'playing' && dirty.value) {
+      void gameSessionRef.value?.saveAutosave();
+    }
+  }, ms);
 }
 
-function saveGame(): void {
-  const snapshot = gameManager?.snapshot;
-  if (!snapshot) {
-    showStatus('No game state available to save', true);
+async function beginSession(modIds: string[], state?: StateSnapshot | null): Promise<void> {
+  screen.value = 'loading';
+  loadError.value = null;
+  clearContentCache();
+  sessionModIds.value = modIds;
+  initialState.value = state ?? null;
+
+  try {
+    const loaded = await loadContent({
+      enabledModIds: modIds,
+    });
+    contentPack.value = loaded.pack;
+    sessionModIds.value = loaded.modIds;
+    contentJson.value = contentPackToJson(loaded.pack);
+    sessionKey.value += 1;
+    screen.value = 'playing';
+    dirty.value = false;
+    startAutosaveTimer();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    loadError.value = message;
+    screen.value = 'loading';
+  }
+}
+
+function startNewGame(): void {
+  void beginSession(settings.value.enabled_mods);
+}
+
+async function continueFromAutosave(): Promise<void> {
+  const save = await readSave(getResources(), 'autosave');
+  if (!save) {
+    showStatus('No autosave found', true);
     return;
   }
-  downloadSaveFile(buildSaveFile(snapshot, activeModIds.value));
-  showStatus('Game saved');
+  const result = validateSaveFile(save);
+  if (typeof result === 'string') {
+    showStatus(result, true);
+    return;
+  }
+  await applySave(result, settings.value.enabled_mods);
 }
 
-function triggerLoad(): void {
-  loadInput.value?.click();
+async function applySave(result: ValidatedSave, currentMods: string[]): Promise<void> {
+  const choice = await resolveModMismatch(result.content_mods, currentMods);
+  if (choice === 'cancel') return;
+
+  if (choice === 'switchMods') {
+    const mods = result.content_mods ?? ['base'];
+    settings.value = { ...settings.value, enabled_mods: mods };
+    await saveSettings(settings.value);
+    await restartGame(mods, result.state);
+    return;
+  }
+
+  await beginSession(currentMods, result.state);
 }
 
-async function onLoadFileSelected(event: Event): Promise<void> {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = '';
-  if (!file) return;
+async function loadFromSlot(id: SaveId): Promise<void> {
+  const save = await readSave(getResources(), id);
+  if (!save) {
+    showStatus('Save slot is empty', true);
+    return;
+  }
+  const result = validateSaveFile(save);
+  if (typeof result === 'string') {
+    showStatus(result, true);
+    return;
+  }
+  await applySave(result, settings.value.enabled_mods);
+}
 
+async function importSaveFile(): Promise<void> {
+  const raw = await getUi().pickOpenFile();
+  if (!raw) return;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(await file.text());
+    parsed = JSON.parse(raw);
   } catch {
     showStatus('Invalid JSON in save file', true);
     return;
   }
-
   const result = validateSaveFile(parsed);
   if (typeof result === 'string') {
     showStatus(result, true);
     return;
   }
+  await applySave(result, settings.value.enabled_mods);
+}
 
-  if (!modListsEqual(result.content_mods, activeModIds.value)) {
-    const ok = window.confirm(
-      formatModMismatchMessage(result.content_mods, activeModIds.value),
-    );
-    if (!ok) return;
+async function restartGame(modIds: string[], state: StateSnapshot): Promise<void> {
+  settings.value = { ...settings.value, enabled_mods: modIds };
+  await saveSettings(settings.value);
+  await beginSession(modIds, state);
+}
+
+async function quitToMenu(): Promise<void> {
+  stopAutosaveTimer();
+  contentPack.value = null;
+  contentJson.value = '';
+  initialState.value = null;
+  dirty.value = false;
+  screen.value = 'menu';
+  await refreshAutosaveFlag();
+}
+
+async function applyModSettings(enabledMods: string[]): Promise<void> {
+  settings.value = { ...settings.value, enabled_mods: enabledMods };
+  await saveSettings(settings.value);
+  await refreshCatalog();
+  screen.value = 'menu';
+  showStatus('Mod settings saved');
+}
+
+async function quitApp(): Promise<void> {
+  await getDesktopHost()?.quit();
+}
+
+async function handleCloseRequested(): Promise<void> {
+  if (screen.value !== 'playing' || !dirty.value) {
+    if (hasDesktopHost()) await quitApp();
+    return;
   }
 
-  gameManager?.sendEvent({ type: 'load_state', state: result.state });
-  showStatus('Game loaded');
+  const choice = await getUi().quitGuard();
+  if (choice === 'cancel') return;
+  if (choice === 'save') {
+    await gameSessionRef.value?.saveAutosave();
+    if (hasDesktopHost()) await quitApp();
+    return;
+  }
+  if (hasDesktopHost()) await quitApp();
+}
+
+function handleMenuAction(action: string): void {
+  if (screen.value !== 'playing') {
+    if (action === 'quit') void handleCloseRequested();
+    if (action === 'mods-manage') screen.value = 'mods';
+    if (action === 'mods-open-folder') void getResources().revealInFileManager('data', 'mods');
+    return;
+  }
+
+  switch (action) {
+    case 'save':
+      void gameSessionRef.value?.saveQuick();
+      break;
+    case 'load':
+      gameSessionRef.value?.openLoadPicker();
+      break;
+    case 'export':
+      void gameSessionRef.value?.exportSave();
+      break;
+    case 'quit':
+      void handleCloseRequested();
+      break;
+    case 'mods-manage':
+      void quitToMenu().then(() => { screen.value = 'mods'; });
+      break;
+    case 'mods-open-folder':
+      void getResources().revealInFileManager('data', 'mods');
+      break;
+  }
+}
+
+function onDirtyChange(value: boolean): void {
+  dirty.value = value;
+}
+
+function onSessionStatus(message: string, isError = false): void {
+  showStatus(message, isError);
+  if (!isError) void refreshAutosaveFlag();
+}
+
+function backFromLoading(): void {
+  loadError.value = null;
+  screen.value = 'menu';
 }
 </script>
 
 <template>
-  <LoadingScreen :visible="loading" :error="loadError" />
-  <div ref="canvasMount" class="canvas-host" />
-  <Hud
-    :paused="paused"
-    :speed="speed"
-    :speed-presets="SPEED_PRESETS"
-    @toggle-pause="togglePause"
-    @set-speed="setSpeed"
-    @save="saveGame"
-    @load="triggerLoad"
+  <MainMenu
+    v-if="screen === 'menu'"
+    :can-continue="hasAutosave"
+    @continue="continueFromAutosave"
+    @new-game="startNewGame"
+    @load-game="screen = 'load-game'"
+    @mods="screen = 'mods'"
+    @quit="handleCloseRequested"
   />
-  <input
-    ref="loadInput"
-    type="file"
-    accept=".json,application/json"
-    class="hidden-input"
-    @change="onLoadFileSelected"
+
+  <ModPicker
+    v-if="screen === 'mods'"
+    :catalog="catalog"
+    :enabled-mods="settings.enabled_mods"
+    @apply="applyModSettings"
+    @back="screen = 'menu'"
   />
+
+  <LoadGameScreen
+    v-if="screen === 'load-game'"
+    @load-slot="loadFromSlot"
+    @import-file="importSaveFile"
+    @back="screen = 'menu'"
+  />
+
+  <LoadingScreen
+    v-if="screen === 'loading'"
+    :visible="true"
+    :error="loadError"
+    @back="backFromLoading"
+  />
+
+  <GameSession
+    v-if="screen === 'playing' && contentPack"
+    ref="gameSession"
+    :key="sessionKey"
+    :content-pack="contentPack"
+    :content-json="contentJson"
+    :mod-ids="sessionModIds"
+    :settings="settings"
+    :initial-state="initialState"
+    @dirty-change="onDirtyChange"
+    @status="onSessionStatus"
+    @switch-mods-load="(mods, state) => restartGame(mods, state)"
+    @quit-to-menu="quitToMenu"
+  />
+
   <div v-if="statusMessage" class="status-toast">{{ statusMessage }}</div>
-  <Toolbar v-if="contentReady" :tool-mode="toolMode" @select-mode="(m) => (toolMode = m)" />
-  <ColonistInfo v-if="contentReady" :colonist="selectedColonist" />
 </template>
 
 <style scoped>
-.canvas-host {
-  width: 100%;
-  height: 100%;
-}
-.hidden-input {
-  display: none;
-}
 .status-toast {
   position: fixed;
   bottom: 16px;
@@ -246,7 +336,7 @@ async function onLoadFileSelected(event: Event): Promise<void> {
   border-radius: 8px;
   font-family: system-ui, sans-serif;
   font-size: 14px;
-  z-index: 20;
+  z-index: 100;
   max-width: min(90vw, 480px);
   text-align: center;
 }

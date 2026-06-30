@@ -4,15 +4,13 @@ import wasm from 'vite-plugin-wasm';
 import topLevelAwait from 'vite-plugin-top-level-await';
 import { resolve } from 'path';
 
-
 export default defineConfig({
   base: './',
   plugins: [vue(), wasm(), topLevelAwait()],
-  publicDir: resolve(__dirname, '../../content'),
+  publicDir: resolve(__dirname, '../../../content'),
   resolve: {
     alias: {
-      '@': resolve(__dirname, 'src'),
-      '@content': resolve(__dirname, '../../content'),
+      '@idle-colony/client': resolve(__dirname, '../../packages/client/src'),
     },
   },
   worker: {
@@ -21,8 +19,5 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-  },
-  test: {
-    include: ['src/**/*.test.ts'],
   },
 });
