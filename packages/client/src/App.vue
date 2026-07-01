@@ -179,6 +179,13 @@ async function restartGame(modIds: string[], state: StateSnapshot): Promise<void
 }
 
 async function quitToMenu(): Promise<void> {
+  if (screen.value === 'playing' && dirty.value) {
+    const choice = await getUi().quitGuard();
+    if (choice === 'cancel') return;
+    if (choice === 'save') {
+      await gameSessionRef.value?.saveAutosave();
+    }
+  }
   stopAutosaveTimer();
   contentPack.value = null;
   contentJson.value = '';

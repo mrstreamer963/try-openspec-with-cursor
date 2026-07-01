@@ -205,6 +205,7 @@ defineExpose({
     @set-speed="setSpeed"
     @save="saveToSlot(settings.last_slot)"
     @load="showLoadPicker = true"
+    @quit-to-menu="emit('quitToMenu')"
   />
   <SaveSlotPicker
     v-if="showLoadPicker"
