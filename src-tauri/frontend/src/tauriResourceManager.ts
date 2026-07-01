@@ -65,8 +65,12 @@ export function createTauriResourceManager(baseUrl = import.meta.env.BASE_URL): 
     async exists(location: ResourceLocation, path: string): Promise<boolean> {
       if (location === 'bundled') {
         try {
-          const response = await fetch(bundledUrl(path, baseUrl), { method: 'HEAD' });
-          return response.ok;
+          const url = bundledUrl(path, baseUrl);
+          const head = await fetch(url, { method: 'HEAD' });
+          if (head.ok) return true;
+          if (head.status !== 405 && head.status !== 501) return false;
+          const get = await fetch(url, { method: 'GET', headers: { Range: 'bytes=0-0' } });
+          return get.ok;
         } catch {
           return false;
         }

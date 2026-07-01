@@ -89,6 +89,7 @@ export class PixiRenderer {
       resizeTo: this.mount,
       backgroundColor: 0x1a202c,
       antialias: true,
+      preference: 'webgl',
     });
     this.mount.appendChild(this.app.canvas);
 

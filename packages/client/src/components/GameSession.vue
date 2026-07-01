@@ -75,44 +75,49 @@ onMounted(async () => {
   window.addEventListener('keydown', onKeyDown);
   if (!canvasMount.value) return;
 
-  gameManager = new GameManager();
-  gameManager.onReady(() => {
-    if (props.initialState) {
-      gameManager?.sendEvent({ type: 'load_state', state: props.initialState });
-      setDirty(false);
-    }
-  });
-  gameManager.onError((msg) => {
-    emit('status', msg, true);
-  });
-  gameManager.onSnapshot((snapshot) => {
-    paused.value = snapshot.paused;
-    speed.value = snapshot.speed;
-    renderer?.updateSnapshot(snapshot);
-    if (selectedColonist.value) {
-      const updated = snapshot.colonists.find((c) => c.id === selectedColonist.value!.id);
-      selectedColonist.value = updated ?? null;
-    }
-  });
+  try {
+    gameManager = new GameManager();
+    gameManager.onReady(() => {
+      if (props.initialState) {
+        gameManager?.sendEvent({ type: 'load_state', state: props.initialState });
+        setDirty(false);
+      }
+    });
+    gameManager.onError((msg) => {
+      emit('status', msg, true);
+    });
+    gameManager.onSnapshot((snapshot) => {
+      paused.value = snapshot.paused;
+      speed.value = snapshot.speed;
+      renderer?.updateSnapshot(snapshot);
+      if (selectedColonist.value) {
+        const updated = snapshot.colonists.find((c) => c.id === selectedColonist.value!.id);
+        selectedColonist.value = updated ?? null;
+      }
+    });
 
-  gameManager.start(props.contentJson);
-  renderer = new PixiRenderer(canvasMount.value, props.contentPack);
-  await renderer.init();
-  renderer.setOnSceneClick((click) => {
-    if (click.kind === 'colonist') {
-      selectedColonist.value = click.colonist;
-      return;
-    }
-    selectedColonist.value = null;
-    if (toolMode.value === 'deconstruct') {
-      gameManager?.sendEvent({ type: 'deconstruct', x: click.x, y: click.y });
-      markDirty();
-    } else if (toolMode.value) {
-      gameManager?.sendEvent({ type: 'build', building: toolMode.value, x: click.x, y: click.y });
-      markDirty();
-    }
-  });
-  renderer.startRenderLoop(() => renderer?.renderFrame());
+    renderer = new PixiRenderer(canvasMount.value, props.contentPack);
+    await renderer.init();
+    renderer.setOnSceneClick((click) => {
+      if (click.kind === 'colonist') {
+        selectedColonist.value = click.colonist;
+        return;
+      }
+      selectedColonist.value = null;
+      if (toolMode.value === 'deconstruct') {
+        gameManager?.sendEvent({ type: 'deconstruct', x: click.x, y: click.y });
+        markDirty();
+      } else if (toolMode.value) {
+        gameManager?.sendEvent({ type: 'build', building: toolMode.value, x: click.x, y: click.y });
+        markDirty();
+      }
+    });
+    renderer.startRenderLoop(() => renderer?.renderFrame());
+    gameManager.start(props.contentJson);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    emit('status', `Renderer failed: ${message}`, true);
+  }
 });
 
 onUnmounted(() => {
@@ -214,6 +219,9 @@ defineExpose({
 
 <style scoped>
 .canvas-host {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
   width: 100%;
   height: 100%;
 }
