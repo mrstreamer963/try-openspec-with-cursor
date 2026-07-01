@@ -3,6 +3,7 @@ import { confirm, open, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { open as openShell } from '@tauri-apps/plugin-shell';
 import { appDataDir, join } from '@tauri-apps/api/path';
 import type { SaveFile } from '@idle-colony/client/game/saveFile';
+import { isMissingBundledAsset } from '@idle-colony/client/resources/bundledAsset';
 import type { ResourceLocation, ResourceManager } from '@idle-colony/client/resources/types';
 import type { ModMismatchChoice, NativeUi, QuitGuardChoice } from '@idle-colony/client/ui/types';
 
@@ -67,10 +68,10 @@ export function createTauriResourceManager(baseUrl = import.meta.env.BASE_URL): 
         try {
           const url = bundledUrl(path, baseUrl);
           const head = await fetch(url, { method: 'HEAD' });
-          if (head.ok) return true;
+          if (head.ok && !isMissingBundledAsset(head)) return true;
           if (head.status !== 405 && head.status !== 501) return false;
           const get = await fetch(url, { method: 'GET', headers: { Range: 'bytes=0-0' } });
-          return get.ok;
+          return get.ok && !isMissingBundledAsset(get);
         } catch {
           return false;
         }

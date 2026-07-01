@@ -1,3 +1,4 @@
+import { isMissingBundledAsset } from './bundledAsset';
 import type { ResourceLocation, ResourceManager } from './types';
 
 const LEGACY_SETTINGS_KEY = 'idle-colony-sim-settings';
@@ -52,7 +53,7 @@ export function createWebResourceManager(baseUrl = import.meta.env.BASE_URL): Re
       if (location === 'bundled') {
         try {
           const response = await fetch(bundledUrl(path, baseUrl), { method: 'HEAD' });
-          return response.ok;
+          return response.ok && !isMissingBundledAsset(response);
         } catch {
           return false;
         }

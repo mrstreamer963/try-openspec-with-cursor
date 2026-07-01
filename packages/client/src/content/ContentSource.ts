@@ -1,3 +1,5 @@
+import { isMissingBundledAsset } from '../resources/bundledAsset';
+
 export interface ContentSource {
   readText(path: string): Promise<string>;
   exists?(path: string): Promise<boolean>;
@@ -33,7 +35,7 @@ export class BundledContentSource implements ContentSource {
   async exists(path: string): Promise<boolean> {
     try {
       const response = await fetch(this.url(path), { method: 'HEAD' });
-      return response.ok;
+      return response.ok && !isMissingBundledAsset(response);
     } catch {
       return false;
     }

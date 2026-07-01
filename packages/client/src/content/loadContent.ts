@@ -1,5 +1,6 @@
 import { load as parseYaml } from 'js-yaml';
 import { getResources } from '../resources';
+import { isHtmlSpaFallbackBody } from '../resources/bundledAsset';
 import type { ResourceManager } from '../resources/types';
 import { discoverModCatalog, resolveModSource, type ModCatalogEntry } from './modCatalog';
 import { emptyContentPack, mergeContentPacks } from './mergeContent';
@@ -36,15 +37,6 @@ function dataSource(resources: ResourceManager): ContentSource {
     readText: (path) => resources.readText('data', path),
     exists: (path) => resources.exists('data', path),
   };
-}
-
-/** True when the server returned SPA HTML instead of a YAML file (common Vite dev fallback). */
-export function isMissingYamlAsset(response: Response, raw: string): boolean {
-  if (response.status === 404) return true;
-  const contentType = response.headers.get('content-type');
-  if (contentType?.toLowerCase().includes('text/html')) return true;
-  const trimmed = raw.trimStart().toLowerCase();
-  return trimmed.startsWith('<!doctype') || trimmed.startsWith('<html');
 }
 
 async function readYamlFromSource<T>(
@@ -100,6 +92,11 @@ async function loadModPartial(
       if (!requireAllCategories) continue;
       const message = err instanceof Error ? err.message : String(err);
       throw new Error(`Failed to fetch ${modId} ${category} (${path}): ${message}`);
+    }
+
+    if (isHtmlSpaFallbackBody(raw)) {
+      if (!requireAllCategories) continue;
+      throw new Error(`Failed to fetch ${modId} ${category} (${path}): file not found`);
     }
 
     let doc: Record<string, unknown>;
