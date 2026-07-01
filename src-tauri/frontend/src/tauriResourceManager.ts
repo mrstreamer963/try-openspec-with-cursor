@@ -119,8 +119,12 @@ export function createTauriResourceManager(baseUrl = import.meta.env.BASE_URL): 
       await mkdir(await join(root, 'saves'), { recursive: true });
       await mkdir(await join(root, 'mods'), { recursive: true });
       const readmePath = 'mods/README.txt';
-      if (!(await this.exists('data', readmePath))) {
-        await this.writeText('data', readmePath, MODS_README);
+      try {
+        if (!(await this.exists('data', readmePath))) {
+          await this.writeText('data', readmePath, MODS_README);
+        }
+      } catch (err) {
+        console.warn('Could not write mods README:', err);
       }
     },
 

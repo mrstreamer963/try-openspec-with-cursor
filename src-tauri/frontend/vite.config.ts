@@ -20,4 +20,7 @@ export default defineConfig({
   server: {
     port: 5173,
   },
+  optimizeDeps: {
+    include: ['pixi.js', 'parse-svg-path'],
+  },
 });

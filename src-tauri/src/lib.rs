@@ -1,13 +1,31 @@
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::{Emitter, Manager};
 
+#[cfg(debug_assertions)]
+fn with_dev_plugins(
+  builder: tauri::Builder<tauri::Wry>,
+) -> tauri::Builder<tauri::Wry> {
+  builder.plugin(
+    tauri_plugin_mcp_bridge::Builder::new()
+      .bind_address("127.0.0.1")
+      .build(),
+  )
+}
+
+#[cfg(not(debug_assertions))]
+fn with_dev_plugins(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+  builder
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
-    .plugin(tauri_plugin_fs::init())
-    .plugin(tauri_plugin_dialog::init())
-    .plugin(tauri_plugin_shell::init())
-    .plugin(tauri_plugin_process::init())
+  with_dev_plugins(
+    tauri::Builder::default()
+      .plugin(tauri_plugin_fs::init())
+      .plugin(tauri_plugin_dialog::init())
+      .plugin(tauri_plugin_shell::init())
+      .plugin(tauri_plugin_process::init()),
+  )
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

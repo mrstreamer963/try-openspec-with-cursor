@@ -1,3 +1,4 @@
+import './pixiTauriPatch';
 import { createApp } from 'vue';
 import { setResources } from '@idle-colony/client/resources';
 import { setUi } from '@idle-colony/client/ui';
