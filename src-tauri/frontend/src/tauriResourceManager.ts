@@ -3,7 +3,7 @@ import { confirm, open, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { open as openShell } from '@tauri-apps/plugin-shell';
 import { appDataDir, join } from '@tauri-apps/api/path';
 import type { SaveFile } from '@idle-colony/client/game/saveFile';
-import { isMissingBundledAsset } from '@idle-colony/client/resources/bundledAsset';
+import { bundledAssetUrl, isMissingBundledAsset } from '@idle-colony/client/resources/bundledAsset';
 import type { ResourceLocation, ResourceManager } from '@idle-colony/client/resources/types';
 import type { ModMismatchChoice, NativeUi, QuitGuardChoice } from '@idle-colony/client/ui/types';
 
@@ -32,9 +32,7 @@ async function appRoot(): Promise<string> {
 }
 
 function bundledUrl(path: string, baseUrl: string): string {
-  const normalized = path.startsWith('/') ? path.slice(1) : path;
-  const root = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-  return `${root}${normalized}`;
+  return bundledAssetUrl(path, baseUrl);
 }
 
 export function createTauriResourceManager(baseUrl = import.meta.env.BASE_URL): ResourceManager {

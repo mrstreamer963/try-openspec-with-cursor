@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isHtmlSpaFallbackBody, isMissingBundledAsset } from './bundledAsset';
+import { bundledAssetUrl, isHtmlSpaFallbackBody, isMissingBundledAsset } from './bundledAsset';
 
 function mockResponse(status: number, contentType: string | null): Response {
   return {
@@ -8,6 +8,17 @@ function mockResponse(status: number, contentType: string | null): Response {
     headers: { get: (name: string) => (name === 'content-type' ? contentType : null) },
   } as Response;
 }
+
+describe('bundledAssetUrl', () => {
+  it('uses root-relative paths for Tauri/Vite default base', () => {
+    expect(bundledAssetUrl('base/needs.yaml', './')).toBe('/base/needs.yaml');
+    expect(bundledAssetUrl('base/needs.yaml', '/')).toBe('/base/needs.yaml');
+  });
+
+  it('prefixes custom deploy bases', () => {
+    expect(bundledAssetUrl('base/needs.yaml', '/myapp/')).toBe('/myapp/base/needs.yaml');
+  });
+});
 
 describe('isMissingBundledAsset', () => {
   it('treats 404 as missing', () => {

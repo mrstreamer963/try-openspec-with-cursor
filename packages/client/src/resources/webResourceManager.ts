@@ -1,4 +1,4 @@
-import { isMissingBundledAsset } from './bundledAsset';
+import { bundledAssetUrl, isMissingBundledAsset } from './bundledAsset';
 import type { ResourceLocation, ResourceManager } from './types';
 
 const LEGACY_SETTINGS_KEY = 'idle-colony-sim-settings';
@@ -9,18 +9,16 @@ function normalizePath(path: string): string {
   return path.startsWith('/') ? path.slice(1) : path;
 }
 
+function bundledUrl(path: string, baseUrl: string): string {
+  return bundledAssetUrl(path, baseUrl);
+}
+
 function dataStorageKey(path: string): string {
   const normalized = normalizePath(path);
   if (normalized === 'settings.json') return LEGACY_SETTINGS_KEY;
   const saveMatch = normalized.match(/^saves\/(.+)\.json$/);
   if (saveMatch) return `${LEGACY_SAVE_PREFIX}${saveMatch[1]}`;
   return `${DATA_KEY_PREFIX}${normalized}`;
-}
-
-function bundledUrl(path: string, baseUrl: string): string {
-  const normalized = normalizePath(path);
-  const root = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-  return `${root}${normalized}`;
 }
 
 export function createWebResourceManager(baseUrl = import.meta.env.BASE_URL): ResourceManager {
