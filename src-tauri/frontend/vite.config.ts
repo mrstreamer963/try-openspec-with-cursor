@@ -7,7 +7,7 @@ import { resolve } from 'path';
 export default defineConfig({
   base: './',
   plugins: [vue(), wasm(), topLevelAwait()],
-  publicDir: resolve(__dirname, '../../../content'),
+  publicDir: resolve(__dirname, '../../content'),
   resolve: {
     alias: {
       '@idle-colony/client': resolve(__dirname, '../../packages/client/src'),
