@@ -6,6 +6,7 @@ import ColonistInfo from './ColonistInfo.vue';
 import SaveSlotPicker from './SaveSlotPicker.vue';
 import { GameManager } from '../game/GameManager';
 import { PixiRenderer } from '../game/PixiRenderer';
+import type { SpriteResolver } from '../game/spriteResolver';
 import { buildSaveFile, validateSaveFile } from '../game/saveFile';
 import { resolveModMismatch } from '../game/loadFlow';
 import type { ColonistSnapshot, StateSnapshot, ToolMode } from '../game/types';
@@ -19,6 +20,7 @@ import type { AppSettings } from '../settings/types';
 
 const props = defineProps<{
   contentPack: ContentPack;
+  spriteResolver: SpriteResolver;
   contentJson: string;
   modIds: string[];
   settings: AppSettings;
@@ -96,7 +98,7 @@ onMounted(async () => {
       }
     });
 
-    renderer = new PixiRenderer(canvasMount.value, props.contentPack);
+    renderer = new PixiRenderer(canvasMount.value, props.contentPack, props.spriteResolver);
     await renderer.init();
     renderer.setOnSceneClick((click) => {
       if (click.kind === 'colonist') {

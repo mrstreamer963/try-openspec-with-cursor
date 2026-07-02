@@ -22,10 +22,30 @@ export interface StatusDef {
   effects: StatusEffect[];
 }
 
+export interface SpriteRef {
+  atlas: string;
+  frame: number;
+}
+
+export interface AtlasDef {
+  id: string;
+  path: string;
+  tile_size: number;
+  spacing: number;
+  columns: number | 'auto';
+}
+
+export interface EntityDef {
+  id: string;
+  color: number;
+  sprite?: SpriteRef;
+}
+
 export interface TerrainDef {
   id: string;
   walkable: boolean;
   color: number;
+  sprite?: SpriteRef;
 }
 
 export interface SpawnPrimitive {
@@ -57,6 +77,7 @@ export interface BuildingDef {
   blocks_settle: boolean;
   buildable?: boolean;
   color: number;
+  sprite?: SpriteRef;
   on_complete: SpawnPrimitive[];
   interactions: InteractionDef[];
 }
@@ -66,6 +87,7 @@ export interface ContentPack {
   statuses: StatusDef[];
   terrain: TerrainDef[];
   buildings: BuildingDef[];
+  entities: EntityDef[];
 }
 
 export type TerrainId = string;

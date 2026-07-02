@@ -8,6 +8,8 @@ import GameSession from './components/GameSession.vue';
 import { discoverModCatalog, type ModCatalogEntry } from './content/modCatalog';
 import { clearContentCache, loadContent } from './content/loadContent';
 import { contentPackToJson } from './content/loadBaseContent';
+import { loadAtlases } from './game/loadAtlases';
+import { SpriteResolver } from './game/spriteResolver';
 import { validateSaveFile, type ValidatedSave } from './game/saveFile';
 import { resolveModMismatch } from './game/loadFlow';
 import type { StateSnapshot } from './game/types';
@@ -25,6 +27,7 @@ const hasAutosave = ref(false);
 const loadError = ref<string | null>(null);
 const catalog = ref<ModCatalogEntry[]>([]);
 const contentPack = shallowRef<ContentPack | null>(null);
+const spriteResolver = shallowRef<SpriteResolver | null>(null);
 const contentJson = ref('');
 const sessionModIds = ref<string[]>(['base']);
 const initialState = ref<StateSnapshot | null>(null);
@@ -93,6 +96,8 @@ async function beginSession(modIds: string[], state?: StateSnapshot | null): Pro
     const loaded = await loadContent({
       enabledModIds: modIds,
     });
+    const atlasManager = await loadAtlases(getResources());
+    spriteResolver.value = new SpriteResolver(loaded.pack, atlasManager);
     contentPack.value = loaded.pack;
     sessionModIds.value = loaded.modIds;
     contentJson.value = contentPackToJson(loaded.pack);
@@ -188,6 +193,7 @@ async function quitToMenu(): Promise<void> {
   }
   stopAutosaveTimer();
   contentPack.value = null;
+  spriteResolver.value = null;
   contentJson.value = '';
   initialState.value = null;
   dirty.value = false;
@@ -295,10 +301,11 @@ function backFromLoading(): void {
   />
 
   <GameSession
-    v-if="screen === 'playing' && contentPack"
+    v-if="screen === 'playing' && contentPack && spriteResolver"
     ref="gameSession"
     :key="sessionKey"
     :content-pack="contentPack"
+    :sprite-resolver="spriteResolver"
     :content-json="contentJson"
     :mod-ids="sessionModIds"
     :settings="settings"

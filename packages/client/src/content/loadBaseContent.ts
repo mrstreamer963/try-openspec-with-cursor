@@ -9,9 +9,39 @@ export async function loadBaseContent(): Promise<ContentPack> {
   return (await loadContent()).pack;
 }
 
-/** Serialize content pack for WASM init. */
+/** Serialize content pack for WASM init (view-only fields stripped). */
 export function contentPackToJson(pack: ContentPack): string {
-  return JSON.stringify(pack);
+  const simPack = {
+    needs: pack.needs,
+    statuses: pack.statuses,
+    terrain: pack.terrain.map(({ id, walkable, color }) => ({ id, walkable, color })),
+    buildings: pack.buildings.map(
+      ({
+        id,
+        label,
+        work_required,
+        work_to_deconstruct,
+        blocks_movement,
+        blocks_settle,
+        buildable,
+        color,
+        on_complete,
+        interactions,
+      }) => ({
+        id,
+        label,
+        work_required,
+        work_to_deconstruct,
+        blocks_movement,
+        blocks_settle,
+        buildable,
+        color,
+        on_complete,
+        interactions,
+      }),
+    ),
+  };
+  return JSON.stringify(simPack);
 }
 
 export function terrainColorMap(pack: ContentPack): Record<string, number> {

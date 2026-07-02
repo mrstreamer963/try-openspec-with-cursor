@@ -24,6 +24,7 @@ const basePack: ContentPack = {
     { id: 'grass', walkable: true, color: 1 },
     { id: 'water', walkable: false, color: 2 },
   ],
+  entities: [],
 };
 
 describe('mergeById', () => {
@@ -79,5 +80,30 @@ describe('mergeContentPacks', () => {
     expect(merged.needs.find((n) => n.id === 'food')?.decay_per_sec).toBe(4);
     expect(merged.statuses).toHaveLength(1);
     expect(merged.buildings).toHaveLength(1);
+  });
+
+  it('merges entity definitions by id', () => {
+    const merged = mergeContentPacks(basePack, {
+      entities: [
+        {
+          id: 'colonist',
+          color: 0xf6e05e,
+          sprite: { atlas: 'ever-rogue', frame: 49 },
+        },
+      ],
+    });
+    expect(merged.entities).toHaveLength(1);
+    expect(merged.entities[0]?.sprite).toEqual({ atlas: 'ever-rogue', frame: 49 });
+  });
+
+  it('replaces colonist entity from later mod overlay', () => {
+    const withColonist = mergeContentPacks(basePack, {
+      entities: [{ id: 'colonist', color: 1, sprite: { atlas: 'kenney-roguelike', frame: 0 } }],
+    });
+    const merged = mergeContentPacks(withColonist, {
+      entities: [{ id: 'colonist', color: 2, sprite: { atlas: 'ever-rogue', frame: 53 } }],
+    });
+    expect(merged.entities[0]?.color).toBe(2);
+    expect(merged.entities[0]?.sprite?.frame).toBe(53);
   });
 });
