@@ -12,7 +12,10 @@
     "build": "npm run build:wasm && npm run build -w packages/client",
     "preview": "npm run preview -w packages/client",
     "dev:desktop": "npm run build:wasm:dev && tauri dev",
-    "build:desktop": "npm run build:wasm && npm run build -w src-tauri/frontend && tauri build"
+    "build:desktop:assets": "npm run build:wasm && npm run build -w src-tauri/frontend",
+    "build:desktop:fast": "tauri build --no-bundle -c '{\"build\":{\"beforeBuildCommand\":\"\"}}'",
+    "preview:desktop": "npm run build:desktop:assets && vite preview --cwd src-tauri/frontend",
+    "build:desktop": "npm run build:desktop:assets && tauri build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4"

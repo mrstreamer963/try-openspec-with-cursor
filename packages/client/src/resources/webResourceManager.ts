@@ -1,4 +1,4 @@
-import { bundledAssetUrl, isMissingBundledAsset } from './bundledAsset';
+import { bundledAssetExists, readBundledAsset } from './readBundledAsset';
 import type { ResourceLocation, ResourceManager } from './types';
 
 const LEGACY_SETTINGS_KEY = 'idle-colony-sim-settings';
@@ -7,10 +7,6 @@ const DATA_KEY_PREFIX = 'idle-colony-sim-data-';
 
 function normalizePath(path: string): string {
   return path.startsWith('/') ? path.slice(1) : path;
-}
-
-function bundledUrl(path: string, baseUrl: string): string {
-  return bundledAssetUrl(path, baseUrl);
 }
 
 function dataStorageKey(path: string): string {
@@ -25,18 +21,7 @@ export function createWebResourceManager(baseUrl = import.meta.env.BASE_URL): Re
   return {
     async readText(location: ResourceLocation, path: string): Promise<string> {
       if (location === 'bundled') {
-        const url = bundledUrl(path, baseUrl);
-        let response: Response;
-        try {
-          response = await fetch(url);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          throw new Error(`Failed to fetch (${url}): ${message}`);
-        }
-        if (!response.ok) {
-          throw new Error(`Failed to fetch (${url}): HTTP ${response.status} ${response.statusText}`);
-        }
-        return response.text();
+        return readBundledAsset(path, baseUrl);
       }
 
       const key = dataStorageKey(path);
@@ -49,12 +34,7 @@ export function createWebResourceManager(baseUrl = import.meta.env.BASE_URL): Re
 
     async exists(location: ResourceLocation, path: string): Promise<boolean> {
       if (location === 'bundled') {
-        try {
-          const response = await fetch(bundledUrl(path, baseUrl), { method: 'HEAD' });
-          return response.ok && !isMissingBundledAsset(response);
-        } catch {
-          return false;
-        }
+        return bundledAssetExists(path, baseUrl);
       }
       return localStorage.getItem(dataStorageKey(path)) !== null;
     },

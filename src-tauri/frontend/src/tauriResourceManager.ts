@@ -3,7 +3,7 @@ import { confirm, open, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { open as openShell } from '@tauri-apps/plugin-shell';
 import { appDataDir, join } from '@tauri-apps/api/path';
 import type { SaveFile } from '@idle-colony/client/game/saveFile';
-import { bundledAssetUrl, isMissingBundledAsset } from '@idle-colony/client/resources/bundledAsset';
+import { bundledAssetExists, readBundledAsset } from '@idle-colony/client/resources/readBundledAsset';
 import type { ResourceLocation, ResourceManager } from '@idle-colony/client/resources/types';
 import type { ModMismatchChoice, NativeUi, QuitGuardChoice } from '@idle-colony/client/ui/types';
 
@@ -31,10 +31,6 @@ async function appRoot(): Promise<string> {
   return join(base, APP_SUBDIR);
 }
 
-function bundledUrl(path: string, baseUrl: string): string {
-  return bundledAssetUrl(path, baseUrl);
-}
-
 export function createTauriResourceManager(baseUrl = import.meta.env.BASE_URL): ResourceManager {
   let rootPath: string | null = null;
 
@@ -51,28 +47,14 @@ export function createTauriResourceManager(baseUrl = import.meta.env.BASE_URL): 
   return {
     async readText(location: ResourceLocation, path: string): Promise<string> {
       if (location === 'bundled') {
-        const url = bundledUrl(path, baseUrl);
-        const response = await fetch(url);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch bundled resource (${url}): HTTP ${response.status}`);
-        }
-        return response.text();
+        return readBundledAsset(path, baseUrl);
       }
       return readTextFile(dataPath(path), { baseDir: BaseDirectory.AppData });
     },
 
     async exists(location: ResourceLocation, path: string): Promise<boolean> {
       if (location === 'bundled') {
-        try {
-          const url = bundledUrl(path, baseUrl);
-          const head = await fetch(url, { method: 'HEAD' });
-          if (head.ok && !isMissingBundledAsset(head)) return true;
-          if (head.status !== 405 && head.status !== 501) return false;
-          const get = await fetch(url, { method: 'GET', headers: { Range: 'bytes=0-0' } });
-          return get.ok && !isMissingBundledAsset(get);
-        } catch {
-          return false;
-        }
+        return bundledAssetExists(path, baseUrl);
       }
       return exists(dataPath(path), { baseDir: BaseDirectory.AppData });
     },

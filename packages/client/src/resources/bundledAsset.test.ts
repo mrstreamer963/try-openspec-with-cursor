@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { bundledAssetUrl, isHtmlSpaFallbackBody, isMissingBundledAsset } from './bundledAsset';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  bundledAssetExists,
+  bundledAssetUrl,
+  fetchBundledText,
+  isHtmlSpaFallbackBody,
+  isMissingBundledAsset,
+} from './bundledAsset';
 
 function mockResponse(status: number, contentType: string | null): Response {
   return {
@@ -10,13 +16,79 @@ function mockResponse(status: number, contentType: string | null): Response {
 }
 
 describe('bundledAssetUrl', () => {
-  it('uses root-relative paths for Tauri/Vite default base', () => {
+  it('uses root-relative paths when window is unavailable', () => {
     expect(bundledAssetUrl('base/needs.yaml', './')).toBe('/base/needs.yaml');
     expect(bundledAssetUrl('base/needs.yaml', '/')).toBe('/base/needs.yaml');
   });
 
+  it('resolves against the current page in the browser', () => {
+    vi.stubGlobal('window', { location: { href: 'https://tauri.localhost/index.html' } });
+    expect(bundledAssetUrl('base/needs.yaml', './')).toBe('https://tauri.localhost/base/needs.yaml');
+    vi.unstubAllGlobals();
+  });
+
   it('prefixes custom deploy bases', () => {
     expect(bundledAssetUrl('base/needs.yaml', '/myapp/')).toBe('/myapp/base/needs.yaml');
+  });
+});
+
+describe('fetchBundledText', () => {
+  it('returns yaml body on success', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/yaml' },
+        text: async () => 'needs:\n  - id: food',
+      })),
+    );
+    await expect(fetchBundledText('/base/needs.yaml')).resolves.toBe('needs:\n  - id: food');
+    vi.unstubAllGlobals();
+  });
+
+  it('rejects SPA html fallback', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/html' },
+        text: async () => '<!DOCTYPE html><html></html>',
+      })),
+    );
+    await expect(fetchBundledText('/base/needs.yaml')).rejects.toThrow(/file not found/);
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('bundledAssetExists', () => {
+  it('returns true for yaml asset', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/yaml' },
+        text: async () => 'needs:\n  - id: food',
+      })),
+    );
+    await expect(bundledAssetExists('/base/needs.yaml')).resolves.toBe(true);
+    vi.unstubAllGlobals();
+  });
+
+  it('returns false for html fallback', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/html' },
+        text: async () => '<!DOCTYPE html><html></html>',
+      })),
+    );
+    await expect(bundledAssetExists('/base/needs.yaml')).resolves.toBe(false);
+    vi.unstubAllGlobals();
   });
 });
 
