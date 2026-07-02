@@ -3,6 +3,10 @@ defineProps<{
   visible: boolean;
   error?: string | null;
 }>();
+
+const emit = defineEmits<{
+  back: [];
+}>();
 </script>
 
 <template>
@@ -10,6 +14,7 @@ defineProps<{
     <div v-if="!error" class="spinner" />
     <p v-if="error" class="error">{{ error }}</p>
     <p v-else>Loading colony simulation…</p>
+    <button v-if="error" class="back-btn" @click="emit('back')">Back to menu</button>
   </div>
 </template>
 
@@ -43,5 +48,15 @@ defineProps<{
   max-width: min(90vw, 480px);
   text-align: center;
   line-height: 1.4;
+}
+.back-btn {
+  margin-top: 8px;
+  background: #2d3748;
+  color: #e2e8f0;
+  border: 1px solid #4a5568;
+  border-radius: 6px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
 }
 </style>

@@ -10,6 +10,7 @@ const emit = defineEmits<{
   setSpeed: [speed: number];
   save: [];
   load: [];
+  quitToMenu: [];
 }>();
 </script>
 
@@ -33,6 +34,7 @@ const emit = defineEmits<{
     <div class="file-group">
       <button class="btn" @click="emit('save')">Save</button>
       <button class="btn" @click="emit('load')">Load</button>
+      <button class="btn" @click="emit('quitToMenu')">Menu</button>
     </div>
   </div>
 </template>
