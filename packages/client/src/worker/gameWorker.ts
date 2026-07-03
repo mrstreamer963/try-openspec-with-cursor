@@ -44,15 +44,15 @@ function startLoop(): void {
   }, TICK_MS);
 }
 
-function handleEvent(event: IncomingEvent): void {
-  if (!game) return;
+function handleEvent(event: IncomingEvent): boolean {
+  if (!game) return false;
 
   const json = serializeIncomingEvent(event);
   const responseJson = game.handle_event(json);
   const response = parseOutgoingEvent(responseJson);
   if (response?.kind === 'error') {
     postMessage({ kind: 'error', message: response.message } satisfies WorkerMessage);
-    return;
+    return false;
   }
 
   if (event.type === 'set_paused') {
@@ -69,19 +69,38 @@ function handleEvent(event: IncomingEvent): void {
   if (snapshot?.kind === 'snapshot') {
     postMessage({ kind: 'snapshot', data: snapshot.data } satisfies WorkerMessage);
   }
+  return true;
 }
 
-self.onmessage = async (e: MessageEvent<MainToWorkerMessage>) => {
+function postCurrentSnapshot(): void {
+  const snapshot = parseOutgoingEvent(game!.get_snapshot());
+  if (snapshot?.kind === 'snapshot') {
+    postMessage({ kind: 'snapshot', data: snapshot.data } satisfies WorkerMessage);
+  }
+}
+
+async function handleStart(msg: Extract<MainToWorkerMessage, { kind: 'start' }>): Promise<void> {
+  await initGame(msg.contentJson);
+  if (msg.initialState) {
+    const loaded = handleEvent({ type: 'load_state', state: msg.initialState });
+    if (!loaded) return;
+  } else {
+    postCurrentSnapshot();
+  }
+  postMessage({ kind: 'ready' } satisfies WorkerMessage);
+  startLoop();
+}
+
+self.onmessage = (e: MessageEvent<MainToWorkerMessage>) => {
   const msg = e.data;
   try {
     if (msg.kind === 'start') {
-      await initGame(msg.contentJson);
-      const snapshot = parseOutgoingEvent(game!.get_snapshot());
-      if (snapshot?.kind === 'snapshot') {
-        postMessage({ kind: 'snapshot', data: snapshot.data } satisfies WorkerMessage);
-      }
-      postMessage({ kind: 'ready' } satisfies WorkerMessage);
-      startLoop();
+      void handleStart(msg).catch((err) => {
+        postMessage({
+          kind: 'error',
+          message: err instanceof Error ? err.message : String(err),
+        } satisfies WorkerMessage);
+      });
     } else if (msg.kind === 'event') {
       handleEvent(msg.event);
     }

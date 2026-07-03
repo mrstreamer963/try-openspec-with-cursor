@@ -12,6 +12,7 @@ import { loadAtlases } from './game/loadAtlases';
 import { SpriteResolver } from './game/spriteResolver';
 import { validateSaveFile, type ValidatedSave } from './game/saveFile';
 import { resolveModMismatch } from './game/loadFlow';
+import { setPendingSessionState } from './game/pendingSessionState';
 import type { StateSnapshot } from './game/types';
 import { getResources, readSave, type SaveId } from './resources';
 import { getUi } from './ui';
@@ -90,7 +91,9 @@ async function beginSession(modIds: string[], state?: StateSnapshot | null): Pro
   loadError.value = null;
   clearContentCache();
   sessionModIds.value = modIds;
-  initialState.value = state ?? null;
+  const sessionState = state ?? null;
+  initialState.value = sessionState;
+  setPendingSessionState(sessionState);
 
   try {
     const loaded = await loadContent({
@@ -108,6 +111,7 @@ async function beginSession(modIds: string[], state?: StateSnapshot | null): Pro
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     loadError.value = message;
+    setPendingSessionState(null);
     screen.value = 'loading';
   }
 }
@@ -184,14 +188,11 @@ async function restartGame(modIds: string[], state: StateSnapshot): Promise<void
 }
 
 async function quitToMenu(): Promise<void> {
-  if (screen.value === 'playing' && dirty.value) {
-    const choice = await getUi().quitGuard();
-    if (choice === 'cancel') return;
-    if (choice === 'save') {
-      await gameSessionRef.value?.saveAutosave();
-    }
+  if (screen.value === 'playing') {
+    await gameSessionRef.value?.saveAutosave();
   }
   stopAutosaveTimer();
+  setPendingSessionState(null);
   contentPack.value = null;
   spriteResolver.value = null;
   contentJson.value = '';

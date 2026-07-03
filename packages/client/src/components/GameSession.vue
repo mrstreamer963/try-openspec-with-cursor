@@ -5,6 +5,7 @@ import Toolbar from './Toolbar.vue';
 import ColonistInfo from './ColonistInfo.vue';
 import SaveSlotPicker from './SaveSlotPicker.vue';
 import { GameManager } from '../game/GameManager';
+import { consumePendingSessionState } from '../game/pendingSessionState';
 import { PixiRenderer } from '../game/PixiRenderer';
 import type { SpriteResolver } from '../game/spriteResolver';
 import { buildSaveFile, validateSaveFile } from '../game/saveFile';
@@ -81,7 +82,6 @@ onMounted(async () => {
     gameManager = new GameManager();
     gameManager.onReady(() => {
       if (props.initialState) {
-        gameManager?.sendEvent({ type: 'load_state', state: props.initialState });
         setDirty(false);
       }
     });
@@ -97,6 +97,9 @@ onMounted(async () => {
         selectedColonist.value = updated ?? null;
       }
     });
+
+    const restoreState = consumePendingSessionState() ?? props.initialState ?? null;
+    gameManager.start(props.contentJson, restoreState);
 
     renderer = new PixiRenderer(canvasMount.value, props.contentPack, props.spriteResolver);
     await renderer.init();
@@ -115,7 +118,6 @@ onMounted(async () => {
       }
     });
     renderer.startRenderLoop(() => renderer?.renderFrame());
-    gameManager.start(props.contentJson);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     emit('status', `Renderer failed: ${message}`, true);
