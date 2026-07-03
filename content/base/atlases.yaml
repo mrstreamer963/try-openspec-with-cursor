@@ -1,0 +1,17 @@
+# CC0 sources: kenney.nl (Roguelike/RPG, Tiny Town), opengameart.org (Ever Rogue)
+atlases:
+  - id: kenney-roguelike
+    path: assets/kenney-roguelike/spritesheet.png
+    tile_size: 16
+    spacing: 1
+    columns: 57
+  - id: kenney-tiny-town
+    path: assets/kenney-tiny-town/tilemap.png
+    tile_size: 16
+    spacing: 1
+    columns: 12
+  - id: ever-rogue
+    path: assets/ever-rogue/everroguetileset_full_packed.png
+    tile_size: 16
+    spacing: 0
+    columns: auto

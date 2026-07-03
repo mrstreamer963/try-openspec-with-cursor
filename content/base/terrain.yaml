@@ -1,0 +1,13 @@
+terrain:
+  - id: water
+    walkable: false
+    color: 0x2b6cb0
+    sprite: { atlas: kenney-roguelike, frame: 0 }
+  - id: sand
+    walkable: true
+    color: 0xd69e2e
+    sprite: { atlas: kenney-roguelike, frame: 6 }
+  - id: grass
+    walkable: true
+    color: 0x38a169
+    sprite: { atlas: kenney-roguelike, frame: 855 }

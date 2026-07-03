@@ -1,0 +1,4 @@
+entities:
+  - id: colonist
+    color: 0xf6e05e
+    sprite: { atlas: ever-rogue, frame: 49 }

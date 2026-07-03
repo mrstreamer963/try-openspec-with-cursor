@@ -1,0 +1,6 @@
+node_modules/
+dist/
+packages/client/src/wasm/
+target/
+.DS_Store
+.cursor/

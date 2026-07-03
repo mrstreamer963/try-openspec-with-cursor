@@ -1,0 +1,54 @@
+buildings:
+  - id: wall
+    label: "🧱 Wall"
+    work_required: 30
+    work_to_deconstruct: 15
+    blocks_movement: true
+    blocks_settle: false
+    buildable: true
+    color: 0x718096
+    sprite: { atlas: kenney-roguelike, frame: 746 }
+    on_complete: []
+    interactions: []
+  - id: bed
+    label: "🛏 Bed"
+    work_required: 50
+    work_to_deconstruct: 25
+    blocks_movement: false
+    blocks_settle: false
+    buildable: true
+    color: 0x9f7aea
+    sprite: { atlas: kenney-roguelike, frame: 1190 }
+    on_complete:
+      - type: reservation
+        kind: single_occupant
+    interactions:
+      - mode: on_tile
+        duration_sec: 2.0
+        effects:
+          - type: restore_need
+            need: sleep
+            amount: 100
+  - id: berry_bush
+    label: "🫐 Berry Bush"
+    work_required: 40
+    work_to_deconstruct: 20
+    blocks_movement: false
+    blocks_settle: true
+    buildable: true
+    color: 0xe53e3e
+    sprite: { atlas: kenney-roguelike, frame: 342 }
+    on_complete:
+      - type: supply
+        resource: berries
+        amount: 3
+    interactions:
+      - mode: adjacent
+        duration_sec: 0
+        effects:
+          - type: consume_supply
+            resource: berries
+            amount: 1
+          - type: restore_need
+            need: food
+            amount: 100

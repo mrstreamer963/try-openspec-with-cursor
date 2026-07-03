@@ -1,0 +1,95 @@
+use serde::{Deserialize, Serialize};
+
+use crate::components::TaskKind;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum IncomingEvent {
+    SetPaused { paused: bool },
+    SetSpeed { multiplier: f32 },
+    Build {
+        building: String,
+        x: i32,
+        y: i32,
+    },
+    Deconstruct {
+        x: i32,
+        y: i32,
+    },
+    LoadState { state: StateSnapshot },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TileSnapshot {
+    pub x: i32,
+    pub y: i32,
+    pub terrain: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BuildingSnapshot {
+    pub x: i32,
+    pub y: i32,
+    pub building: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub berries: Option<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ColonistSnapshot {
+    pub id: u32,
+    pub name: String,
+    pub x: f32,
+    pub y: f32,
+    pub food: f32,
+    pub sleep: f32,
+    pub hungry: bool,
+    pub wants_sleep: bool,
+    pub task: TaskKind,
+    #[serde(default)]
+    pub building_x: i32,
+    #[serde(default)]
+    pub building_y: i32,
+    #[serde(default)]
+    pub target_x: i32,
+    #[serde(default)]
+    pub target_y: i32,
+    /// True when the colonist has reached the task stand and finished walking.
+    #[serde(default)]
+    pub at_task_stand: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConstructionSiteSnapshot {
+    pub x: i32,
+    pub y: i32,
+    pub building: String,
+    pub progress: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeconstructionSiteSnapshot {
+    pub x: i32,
+    pub y: i32,
+    pub building: String,
+    pub progress: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StateSnapshot {
+    pub tiles: Vec<TileSnapshot>,
+    pub buildings: Vec<BuildingSnapshot>,
+    pub construction_sites: Vec<ConstructionSiteSnapshot>,
+    #[serde(default)]
+    pub deconstruction_sites: Vec<DeconstructionSiteSnapshot>,
+    pub colonists: Vec<ColonistSnapshot>,
+    pub paused: bool,
+    pub speed: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum OutgoingEvent {
+    StateSnapshot(StateSnapshot),
+    Error { message: String },
+}
