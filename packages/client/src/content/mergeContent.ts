@@ -48,9 +48,12 @@ export function mergeContentPacks(base: ContentPack, overlay: Partial<ContentPac
       ? mergeById(base.buildings, overlay.buildings, 'buildings')
       : base.buildings,
     terrain: overlay.terrain ? mergeById(base.terrain, overlay.terrain, 'terrain') : base.terrain,
+    entities: overlay.entities
+      ? mergeById(base.entities, overlay.entities, 'entities')
+      : base.entities,
   };
 }
 
 export function emptyContentPack(): ContentPack {
-  return { needs: [], statuses: [], buildings: [], terrain: [] };
+  return { needs: [], statuses: [], buildings: [], terrain: [], entities: [] };
 }

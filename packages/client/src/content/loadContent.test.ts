@@ -48,6 +48,7 @@ const basePackFiles = {
   'base/statuses.yaml': 'statuses:\n  - id: hungry',
   'base/buildings.yaml': 'buildings:\n  - id: wall',
   'base/terrain.yaml': 'terrain:\n  - id: grass',
+  'base/entities.yaml': 'entities:\n  - id: colonist\n    color: 0xf6e05e',
 };
 
 const hardmodePartialFiles = {
@@ -73,6 +74,33 @@ describe('loadContent optional categories', () => {
     ...basePackFiles,
     ...hardmodePartialFiles,
   };
+
+  it('loads entities.yaml from base mod', async () => {
+    const resources = mockResourceManager({
+      bundled: {
+        ...basePackFiles,
+        'base/entities.yaml': 'entities:\n  - id: colonist\n    color: 0xf6e05e',
+      },
+    });
+    const { pack } = await loadContent({ enabledModIds: ['base'], resources });
+    expect(pack.entities).toHaveLength(1);
+    expect(pack.entities[0]?.id).toBe('colonist');
+  });
+
+  it('loads sprite refs on terrain and entities', async () => {
+    const resources = mockResourceManager({
+      bundled: {
+        ...basePackFiles,
+        'base/terrain.yaml':
+          'terrain:\n  - id: grass\n    walkable: true\n    color: 1\n    sprite: { atlas: kenney-roguelike, frame: 855 }',
+        'base/entities.yaml':
+          'entities:\n  - id: colonist\n    color: 0xf6e05e\n    sprite: { atlas: ever-rogue, frame: 49 }',
+      },
+    });
+    const { pack } = await loadContent({ enabledModIds: ['base'], resources });
+    expect(pack.terrain[0]?.sprite).toEqual({ atlas: 'kenney-roguelike', frame: 855 });
+    expect(pack.entities[0]?.sprite).toEqual({ atlas: 'ever-rogue', frame: 49 });
+  });
 
   it('skips optional categories when file is absent', async () => {
     const resources = mockResourceManager({

@@ -5,7 +5,9 @@ import Toolbar from './Toolbar.vue';
 import ColonistInfo from './ColonistInfo.vue';
 import SaveSlotPicker from './SaveSlotPicker.vue';
 import { GameManager } from '../game/GameManager';
+import { consumePendingSessionState } from '../game/pendingSessionState';
 import { PixiRenderer } from '../game/PixiRenderer';
+import type { SpriteResolver } from '../game/spriteResolver';
 import { buildSaveFile, validateSaveFile } from '../game/saveFile';
 import { resolveModMismatch } from '../game/loadFlow';
 import type { ColonistSnapshot, StateSnapshot, ToolMode } from '../game/types';
@@ -19,6 +21,7 @@ import type { AppSettings } from '../settings/types';
 
 const props = defineProps<{
   contentPack: ContentPack;
+  spriteResolver: SpriteResolver;
   contentJson: string;
   modIds: string[];
   settings: AppSettings;
@@ -79,7 +82,6 @@ onMounted(async () => {
     gameManager = new GameManager();
     gameManager.onReady(() => {
       if (props.initialState) {
-        gameManager?.sendEvent({ type: 'load_state', state: props.initialState });
         setDirty(false);
       }
     });
@@ -96,7 +98,10 @@ onMounted(async () => {
       }
     });
 
-    renderer = new PixiRenderer(canvasMount.value, props.contentPack);
+    const restoreState = consumePendingSessionState() ?? props.initialState ?? null;
+    gameManager.start(props.contentJson, restoreState);
+
+    renderer = new PixiRenderer(canvasMount.value, props.contentPack, props.spriteResolver);
     await renderer.init();
     renderer.setOnSceneClick((click) => {
       if (click.kind === 'colonist') {
@@ -113,7 +118,6 @@ onMounted(async () => {
       }
     });
     renderer.startRenderLoop(() => renderer?.renderFrame());
-    gameManager.start(props.contentJson);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     emit('status', `Renderer failed: ${message}`, true);

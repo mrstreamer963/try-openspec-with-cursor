@@ -8,8 +8,11 @@ import GameSession from './components/GameSession.vue';
 import { discoverModCatalog, type ModCatalogEntry } from './content/modCatalog';
 import { clearContentCache, loadContent } from './content/loadContent';
 import { contentPackToJson } from './content/loadBaseContent';
+import { loadAtlases } from './game/loadAtlases';
+import { SpriteResolver } from './game/spriteResolver';
 import { validateSaveFile, type ValidatedSave } from './game/saveFile';
 import { resolveModMismatch } from './game/loadFlow';
+import { setPendingSessionState } from './game/pendingSessionState';
 import type { StateSnapshot } from './game/types';
 import { getResources, readSave, type SaveId } from './resources';
 import { getUi } from './ui';
@@ -25,6 +28,7 @@ const hasAutosave = ref(false);
 const loadError = ref<string | null>(null);
 const catalog = ref<ModCatalogEntry[]>([]);
 const contentPack = shallowRef<ContentPack | null>(null);
+const spriteResolver = shallowRef<SpriteResolver | null>(null);
 const contentJson = ref('');
 const sessionModIds = ref<string[]>(['base']);
 const initialState = ref<StateSnapshot | null>(null);
@@ -87,12 +91,16 @@ async function beginSession(modIds: string[], state?: StateSnapshot | null): Pro
   loadError.value = null;
   clearContentCache();
   sessionModIds.value = modIds;
-  initialState.value = state ?? null;
+  const sessionState = state ?? null;
+  initialState.value = sessionState;
+  setPendingSessionState(sessionState);
 
   try {
     const loaded = await loadContent({
       enabledModIds: modIds,
     });
+    const atlasManager = await loadAtlases(getResources());
+    spriteResolver.value = new SpriteResolver(loaded.pack, atlasManager);
     contentPack.value = loaded.pack;
     sessionModIds.value = loaded.modIds;
     contentJson.value = contentPackToJson(loaded.pack);
@@ -103,6 +111,7 @@ async function beginSession(modIds: string[], state?: StateSnapshot | null): Pro
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     loadError.value = message;
+    setPendingSessionState(null);
     screen.value = 'loading';
   }
 }
@@ -179,15 +188,13 @@ async function restartGame(modIds: string[], state: StateSnapshot): Promise<void
 }
 
 async function quitToMenu(): Promise<void> {
-  if (screen.value === 'playing' && dirty.value) {
-    const choice = await getUi().quitGuard();
-    if (choice === 'cancel') return;
-    if (choice === 'save') {
-      await gameSessionRef.value?.saveAutosave();
-    }
+  if (screen.value === 'playing') {
+    await gameSessionRef.value?.saveAutosave();
   }
   stopAutosaveTimer();
+  setPendingSessionState(null);
   contentPack.value = null;
+  spriteResolver.value = null;
   contentJson.value = '';
   initialState.value = null;
   dirty.value = false;
@@ -295,10 +302,11 @@ function backFromLoading(): void {
   />
 
   <GameSession
-    v-if="screen === 'playing' && contentPack"
+    v-if="screen === 'playing' && contentPack && spriteResolver"
     ref="gameSession"
     :key="sessionKey"
     :content-pack="contentPack"
+    :sprite-resolver="spriteResolver"
     :content-json="contentJson"
     :mod-ids="sessionModIds"
     :settings="settings"

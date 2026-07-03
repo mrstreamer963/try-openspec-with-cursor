@@ -7,7 +7,7 @@ import { emptyContentPack, mergeContentPacks } from './mergeContent';
 import type { ContentPack } from './types';
 import type { ContentSource } from './ContentSource';
 
-const CATEGORY_FILES = ['needs', 'statuses', 'buildings', 'terrain'] as const;
+const CATEGORY_FILES = ['needs', 'statuses', 'buildings', 'terrain', 'entities'] as const;
 
 export interface LoadedContent {
   pack: ContentPack;
@@ -114,7 +114,8 @@ async function loadModPartial(
     if (category === 'needs') partial.needs = items as ContentPack['needs'];
     else if (category === 'statuses') partial.statuses = items as ContentPack['statuses'];
     else if (category === 'buildings') partial.buildings = items as ContentPack['buildings'];
-    else partial.terrain = items as ContentPack['terrain'];
+    else if (category === 'terrain') partial.terrain = items as ContentPack['terrain'];
+    else partial.entities = items as ContentPack['entities'];
   }
   return partial;
 }
