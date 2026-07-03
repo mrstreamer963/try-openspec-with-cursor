@@ -23,7 +23,11 @@ export class AtlasManager {
     const root = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
     const url = `${root}${relative}`.replace(/\/{2,}/g, '/').replace(':/', '://');
     try {
-      const texture = await Assets.load<Texture>({ src: url });
+      const texture = await Assets.load<Texture>({
+        src: url,
+        data: { scaleMode: 'nearest' },
+      });
+      texture.source.scaleMode = 'nearest';
       const columns = resolveColumns(texture.width, def.tile_size, def.spacing, def.columns);
       const rows = rowCount(texture.height, def.tile_size, def.spacing);
       this.atlases.set(def.id, {

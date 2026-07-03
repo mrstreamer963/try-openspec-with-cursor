@@ -90,7 +90,7 @@ export class PixiRenderer {
     await this.app.init({
       resizeTo: this.mount,
       backgroundColor: 0x1a202c,
-      antialias: true,
+      antialias: false,
       preference: 'webgl',
     });
     this.mount.appendChild(this.app.canvas);
@@ -276,13 +276,11 @@ export class PixiRenderer {
     const py = y * TILE_SIZE + inset;
     const size = TILE_SIZE - inset * 2;
     if (texture) {
-      const sprite = new Sprite(texture);
+      const sprite = new Sprite({ texture, roundPixels: true });
       sprite.x = px;
       sprite.y = py;
-      if (inset > 0) {
-        sprite.width = size;
-        sprite.height = size;
-      }
+      sprite.width = size;
+      sprite.height = size;
       sprite.alpha = alpha;
       layer.addChild(sprite);
       return;

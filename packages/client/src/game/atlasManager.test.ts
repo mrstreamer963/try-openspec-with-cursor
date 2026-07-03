@@ -37,6 +37,9 @@ describe('AtlasManager', () => {
     const manager = new AtlasManager();
     await manager.loadAll([testDef], '/');
 
+    expect(mockLoad).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { scaleMode: 'nearest' } }),
+    );
     expect(manager.hasAtlas('test-atlas')).toBe(true);
     const frame0 = manager.getFrameTexture('test-atlas', 0);
     const frame1 = manager.getFrameTexture('test-atlas', 1);
