@@ -43,6 +43,27 @@ const COLONIST_LABEL_STYLE = new TextStyle({
   align: 'center',
 });
 
+const KEYBOARD_PAN_SPEED = 600;
+
+const PAN_KEY_CODES = new Set([
+  'KeyW',
+  'KeyA',
+  'KeyS',
+  'KeyD',
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+]);
+
+const ARROW_KEY_CODES = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+}
+
 export class PixiRenderer {
   readonly app: Application;
   readonly worldContainer: Container;
@@ -63,7 +84,11 @@ export class PixiRenderer {
   private pointerUpHandler?: (e: PointerEvent) => void;
   private pointerMoveHandler?: (e: PointerEvent) => void;
   private wheelHandler?: (e: WheelEvent) => void;
-  private applyCameraTicker?: () => void;
+  private keydownHandler?: (e: KeyboardEvent) => void;
+  private keyupHandler?: (e: KeyboardEvent) => void;
+  private blurHandler?: () => void;
+  private pressedPanKeys = new Set<string>();
+  private applyCameraTicker?: (ticker: { deltaMS: number }) => void;
   private destroyed = false;
   private readonly terrainColors: Record<string, number>;
   private readonly buildingColors: Record<string, number>;
@@ -102,7 +127,10 @@ export class PixiRenderer {
 
     this.centerCamera();
     this.setupInteraction();
-    this.applyCameraTicker = () => this.applyCamera();
+    this.applyCameraTicker = (ticker) => {
+      this.updateKeyboardPan(ticker.deltaMS / 1000);
+      this.applyCamera();
+    };
     this.app.ticker.add(this.applyCameraTicker);
   }
 
@@ -122,6 +150,15 @@ export class PixiRenderer {
     }
     if (this.wheelHandler) {
       canvas.removeEventListener('wheel', this.wheelHandler);
+    }
+    if (this.keydownHandler) {
+      window.removeEventListener('keydown', this.keydownHandler);
+    }
+    if (this.keyupHandler) {
+      window.removeEventListener('keyup', this.keyupHandler);
+    }
+    if (this.blurHandler) {
+      window.removeEventListener('blur', this.blurHandler);
     }
 
     if (this.applyCameraTicker) {
@@ -171,6 +208,24 @@ export class PixiRenderer {
   private applyCamera(): void {
     this.worldContainer.position.set(this.camera.offsetX, this.camera.offsetY);
     this.worldContainer.scale.set(this.camera.zoom);
+  }
+
+  private updateKeyboardPan(deltaSeconds: number): void {
+    if (this.pressedPanKeys.size === 0) return;
+
+    let dx = 0;
+    let dy = 0;
+    if (this.pressedPanKeys.has('KeyW') || this.pressedPanKeys.has('ArrowUp')) dy -= 1;
+    if (this.pressedPanKeys.has('KeyS') || this.pressedPanKeys.has('ArrowDown')) dy += 1;
+    if (this.pressedPanKeys.has('KeyA') || this.pressedPanKeys.has('ArrowLeft')) dx -= 1;
+    if (this.pressedPanKeys.has('KeyD') || this.pressedPanKeys.has('ArrowRight')) dx += 1;
+
+    const len = Math.hypot(dx, dy);
+    if (len === 0) return;
+
+    const distance = KEYBOARD_PAN_SPEED * deltaSeconds;
+    this.camera.offsetX += (dx / len) * distance;
+    this.camera.offsetY += (dy / len) * distance;
   }
 
   private setupInteraction(): void {
@@ -223,6 +278,24 @@ export class PixiRenderer {
       this.applyCamera();
     };
     canvas.addEventListener('wheel', this.wheelHandler, { passive: false });
+
+    this.keydownHandler = (e) => {
+      if (isEditableTarget(e.target)) return;
+      if (!PAN_KEY_CODES.has(e.code)) return;
+      if (ARROW_KEY_CODES.has(e.code)) e.preventDefault();
+      this.pressedPanKeys.add(e.code);
+    };
+    window.addEventListener('keydown', this.keydownHandler);
+
+    this.keyupHandler = (e) => {
+      this.pressedPanKeys.delete(e.code);
+    };
+    window.addEventListener('keyup', this.keyupHandler);
+
+    this.blurHandler = () => {
+      this.pressedPanKeys.clear();
+    };
+    window.addEventListener('blur', this.blurHandler);
   }
 
   private handleClick(clientX: number, clientY: number): void {
