@@ -1,9 +1,26 @@
 import { Application, Container, Graphics, Sprite, Text, TextStyle } from 'pixi.js';
 import { buildingColorMap, terrainColorMap } from '../content/loadBaseContent';
 import type { ContentPack } from '../content/types';
-import type { ColonistSnapshot, StateSnapshot } from './types';
+import type { ColonistSnapshot, StateSnapshot, ToolMode } from './types';
 import type { SpriteResolver } from './spriteResolver';
 import { COLONIST_COLOR, SIM_TICK_MS, TILE_SIZE, WORLD_SIZE } from './types';
+import {
+  clampTile,
+  horizontalVerticalLineTiles,
+  rectTiles,
+  type TileCoord,
+} from './tileShapes';
+
+export type { TileCoord };
+
+export interface SceneLineBuild {
+  building: string;
+  tiles: TileCoord[];
+}
+
+export interface SceneRectDeconstruct {
+  tiles: TileCoord[];
+}
 
 interface ColonistMotion {
   sampleX: number;
@@ -58,6 +75,10 @@ const PAN_KEY_CODES = new Set([
 
 const ARROW_KEY_CODES = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
 
+const DRAG_CLICK_THRESHOLD_PX = 4;
+
+type DragMode = 'pan' | 'wall-line' | 'deconstruct-rect';
+
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
@@ -69,20 +90,28 @@ export class PixiRenderer {
   readonly worldContainer: Container;
   private terrainLayer: Container;
   private buildingsLayer: Container;
+  private previewLayer: Container;
   private entitiesLayer: Container;
   private camera: CameraState = { offsetX: 0, offsetY: 0, zoom: 1 };
   private snapshot: StateSnapshot | null = null;
   private terrainDrawn = false;
-  private isDragging = false;
+  private toolMode: ToolMode = null;
+  private dragMode: DragMode | null = null;
+  private pendingClick = false;
   private dragStart = { x: 0, y: 0 };
   private cameraStart = { offsetX: 0, offsetY: 0 };
+  private shapeStartTile: TileCoord | null = null;
+  private shapeEndTile: TileCoord | null = null;
   private onSceneClick?: (click: SceneClick) => void;
+  private onSceneLineBuild?: (action: SceneLineBuild) => void;
+  private onSceneRectDeconstruct?: (action: SceneRectDeconstruct) => void;
   private colonistGraphics = new Map<number, Graphics | Sprite>();
   private colonistLabels = new Map<number, Text>();
   private colonistMotion = new Map<number, ColonistMotion>();
   private pointerDownHandler?: (e: PointerEvent) => void;
   private pointerUpHandler?: (e: PointerEvent) => void;
   private pointerMoveHandler?: (e: PointerEvent) => void;
+  private contextMenuHandler?: (e: Event) => void;
   private wheelHandler?: (e: WheelEvent) => void;
   private keydownHandler?: (e: KeyboardEvent) => void;
   private keyupHandler?: (e: KeyboardEvent) => void;
@@ -108,6 +137,7 @@ export class PixiRenderer {
     this.worldContainer = new Container();
     this.terrainLayer = new Container();
     this.buildingsLayer = new Container();
+    this.previewLayer = new Container();
     this.entitiesLayer = new Container();
   }
 
@@ -122,6 +152,7 @@ export class PixiRenderer {
 
     this.worldContainer.addChild(this.terrainLayer);
     this.worldContainer.addChild(this.buildingsLayer);
+    this.worldContainer.addChild(this.previewLayer);
     this.worldContainer.addChild(this.entitiesLayer);
     this.app.stage.addChild(this.worldContainer);
 
@@ -148,6 +179,9 @@ export class PixiRenderer {
     if (this.pointerMoveHandler) {
       window.removeEventListener('pointermove', this.pointerMoveHandler);
     }
+    if (this.contextMenuHandler) {
+      canvas.removeEventListener('contextmenu', this.contextMenuHandler);
+    }
     if (this.wheelHandler) {
       canvas.removeEventListener('wheel', this.wheelHandler);
     }
@@ -166,11 +200,27 @@ export class PixiRenderer {
     }
 
     this.onSceneClick = undefined;
+    this.onSceneLineBuild = undefined;
+    this.onSceneRectDeconstruct = undefined;
     this.app.destroy(true);
+  }
+
+  setToolMode(mode: ToolMode): void {
+    this.toolMode = mode;
+    this.resetDrag();
+    this.clearPreview();
   }
 
   setOnSceneClick(handler: (click: SceneClick) => void): void {
     this.onSceneClick = handler;
+  }
+
+  setOnSceneLineBuild(handler: (action: SceneLineBuild) => void): void {
+    this.onSceneLineBuild = handler;
+  }
+
+  setOnSceneRectDeconstruct(handler: (action: SceneRectDeconstruct) => void): void {
+    this.onSceneRectDeconstruct = handler;
   }
 
   updateSnapshot(snapshot: StateSnapshot): void {
@@ -231,32 +281,115 @@ export class PixiRenderer {
   private setupInteraction(): void {
     const canvas = this.app.canvas;
 
+    this.contextMenuHandler = (e) => {
+      e.preventDefault();
+    };
+    canvas.addEventListener('contextmenu', this.contextMenuHandler);
+
     this.pointerDownHandler = (e) => {
-      this.isDragging = true;
+      if (e.button !== 0 && e.button !== 2) return;
+
       this.dragStart = { x: e.clientX, y: e.clientY };
       this.cameraStart = { ...this.camera };
+      this.pendingClick = false;
+      this.dragMode = null;
+
+      if (e.button === 2) {
+        this.dragMode = 'pan';
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+
+      if (this.toolMode === 'wall') {
+        const startTile = this.clientToTile(e.clientX, e.clientY);
+        if (!startTile) return;
+        this.dragMode = 'wall-line';
+        this.shapeStartTile = startTile;
+        this.shapeEndTile = startTile;
+        this.clearPreview();
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+
+      if (this.toolMode === 'deconstruct') {
+        const startTile = this.clientToTile(e.clientX, e.clientY);
+        if (!startTile) return;
+        this.dragMode = 'deconstruct-rect';
+        this.shapeStartTile = startTile;
+        this.shapeEndTile = startTile;
+        this.clearPreview();
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+
+      this.pendingClick = true;
     };
     canvas.addEventListener('pointerdown', this.pointerDownHandler);
 
     this.pointerUpHandler = (e) => {
-      if (!this.isDragging) return;
+      if (e.button !== 0 && e.button !== 2) return;
+
+      const canvas = this.app.canvas;
+      if (canvas.hasPointerCapture(e.pointerId)) {
+        canvas.releasePointerCapture(e.pointerId);
+      }
+
       const dx = e.clientX - this.dragStart.x;
       const dy = e.clientY - this.dragStart.y;
-      const wasDrag = Math.abs(dx) > 4 || Math.abs(dy) > 4;
-      this.isDragging = false;
-      if (!wasDrag) {
+      const wasDrag = Math.abs(dx) > DRAG_CLICK_THRESHOLD_PX || Math.abs(dy) > DRAG_CLICK_THRESHOLD_PX;
+      const mode = this.dragMode;
+
+      if (mode === 'pan') {
+        this.resetDrag();
+        return;
+      }
+
+      if (mode === 'wall-line' && this.shapeStartTile) {
+        const endTile = this.clientToTile(e.clientX, e.clientY) ?? this.shapeStartTile;
+        const tiles = horizontalVerticalLineTiles(this.shapeStartTile, endTile);
+        this.onSceneLineBuild?.({ building: 'wall', tiles });
+        this.resetDrag();
+        this.clearPreview();
+        return;
+      }
+
+      if (mode === 'deconstruct-rect' && this.shapeStartTile) {
+        const endTile = this.clientToTile(e.clientX, e.clientY) ?? this.shapeStartTile;
+        const tiles = rectTiles(this.shapeStartTile, endTile);
+        this.onSceneRectDeconstruct?.({ tiles });
+        this.resetDrag();
+        this.clearPreview();
+        return;
+      }
+
+      if (this.pendingClick && !wasDrag) {
         this.handleClick(e.clientX, e.clientY);
       }
+
+      this.resetDrag();
     };
     window.addEventListener('pointerup', this.pointerUpHandler);
 
     this.pointerMoveHandler = (e) => {
-      if (!this.isDragging) return;
-      const dx = e.clientX - this.dragStart.x;
-      const dy = e.clientY - this.dragStart.y;
-      this.camera.offsetX = this.cameraStart.offsetX + dx;
-      this.camera.offsetY = this.cameraStart.offsetY + dy;
-      this.applyCamera();
+      if (this.dragMode === 'pan') {
+        const dx = e.clientX - this.dragStart.x;
+        const dy = e.clientY - this.dragStart.y;
+        this.camera.offsetX = this.cameraStart.offsetX + dx;
+        this.camera.offsetY = this.cameraStart.offsetY + dy;
+        this.applyCamera();
+        return;
+      }
+
+      if (this.dragMode === 'wall-line' && this.shapeStartTile) {
+        this.shapeEndTile = this.clientToTile(e.clientX, e.clientY) ?? this.shapeStartTile;
+        this.drawWallLinePreview(this.shapeStartTile, this.shapeEndTile);
+        return;
+      }
+
+      if (this.dragMode === 'deconstruct-rect' && this.shapeStartTile) {
+        this.shapeEndTile = this.clientToTile(e.clientX, e.clientY) ?? this.shapeStartTile;
+        this.drawDeconstructRectPreview(this.shapeStartTile, this.shapeEndTile);
+      }
     };
     window.addEventListener('pointermove', this.pointerMoveHandler);
 
@@ -298,18 +431,68 @@ export class PixiRenderer {
     window.addEventListener('blur', this.blurHandler);
   }
 
-  private handleClick(clientX: number, clientY: number): void {
-    if (!this.onSceneClick) return;
+  private resetDrag(): void {
+    this.dragMode = null;
+    this.pendingClick = false;
+    this.shapeStartTile = null;
+    this.shapeEndTile = null;
+  }
+
+  private clearPreview(): void {
+    this.previewLayer.removeChildren();
+  }
+
+  private clientToTile(clientX: number, clientY: number): TileCoord | null {
     const rect = this.app.canvas.getBoundingClientRect();
     const localX = (clientX - rect.left - this.camera.offsetX) / this.camera.zoom;
     const localY = (clientY - rect.top - this.camera.offsetY) / this.camera.zoom;
     const tileX = Math.floor(localX / TILE_SIZE);
     const tileY = Math.floor(localY / TILE_SIZE);
 
-    if (tileX < 0 || tileY < 0 || tileX >= WORLD_SIZE || tileY >= WORLD_SIZE) return;
+    if (tileX < 0 || tileY < 0 || tileX >= WORLD_SIZE || tileY >= WORLD_SIZE) {
+      return null;
+    }
 
-    const hitRadius = TILE_SIZE * 0.35;
-    const colonist = this.snapshot?.colonists.find((c) => {
+    return clampTile(tileX, tileY, WORLD_SIZE);
+  }
+
+  private drawWallLinePreview(start: TileCoord, end: TileCoord): void {
+    this.clearPreview();
+    const color = this.buildingColors.wall ?? 0x718096;
+    for (const tile of horizontalVerticalLineTiles(start, end)) {
+      this.addTileGraphic(this.previewLayer, tile.x, tile.y, null, color, 0.45, 2);
+    }
+  }
+
+  private drawDeconstructRectPreview(start: TileCoord, end: TileCoord): void {
+    this.clearPreview();
+    for (const tile of rectTiles(start, end)) {
+      const g = new Graphics();
+      const pad = 2;
+      g.rect(
+        tile.x * TILE_SIZE + pad,
+        tile.y * TILE_SIZE + pad,
+        TILE_SIZE - pad * 2,
+        TILE_SIZE - pad * 2,
+      );
+      g.fill({ color: 0xe53e3e, alpha: 0.45 });
+      this.previewLayer.addChild(g);
+    }
+  }
+
+  private handleClick(clientX: number, clientY: number): void {
+    if (!this.onSceneClick) return;
+    const tile = this.clientToTile(clientX, clientY);
+    if (!tile) return;
+
+    const { x: tileX, y: tileY } = tile;
+    const rect = this.app.canvas.getBoundingClientRect();
+    const localX = (clientX - rect.left - this.camera.offsetX) / this.camera.zoom;
+    const localY = (clientY - rect.top - this.camera.offsetY) / this.camera.zoom;
+
+    if (this.toolMode === null) {
+      const hitRadius = TILE_SIZE * 0.35;
+      const colonist = this.snapshot?.colonists.find((c) => {
       const motion = this.colonistMotion.get(c.id);
       const wx = motion?.visualX ?? c.x;
       const wy = motion?.visualY ?? c.y;
@@ -319,9 +502,10 @@ export class PixiRenderer {
       const dy = localY - cy;
       return dx * dx + dy * dy <= hitRadius * hitRadius;
     });
-    if (colonist) {
-      this.onSceneClick({ kind: 'colonist', colonist });
-      return;
+      if (colonist) {
+        this.onSceneClick({ kind: 'colonist', colonist });
+        return;
+      }
     }
 
     this.onSceneClick({ kind: 'tile', x: tileX, y: tileY });
