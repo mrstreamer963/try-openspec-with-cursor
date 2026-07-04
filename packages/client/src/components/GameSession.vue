@@ -9,6 +9,7 @@ import { consumePendingSessionState } from '../game/pendingSessionState';
 import { PixiRenderer } from '../game/PixiRenderer';
 import type { SpriteResolver } from '../game/spriteResolver';
 import { buildSaveFile, validateSaveFile } from '../game/saveFile';
+import { isBuildableTile, isDeconstructibleTile } from '../game/placementValidation';
 import { resolveModMismatch } from '../game/loadFlow';
 import type { ColonistSnapshot, StateSnapshot, ToolMode } from '../game/types';
 import { SPEED_PRESETS } from '../speedPresets';
@@ -103,19 +104,47 @@ onMounted(async () => {
 
     renderer = new PixiRenderer(canvasMount.value, props.contentPack, props.spriteResolver);
     await renderer.init();
+    renderer.setToolMode(toolMode.value);
     renderer.setOnSceneClick((click) => {
       if (click.kind === 'colonist') {
         selectedColonist.value = click.colonist;
         return;
       }
       selectedColonist.value = null;
+      const snapshot = gameManager?.snapshot;
+      if (!snapshot) return;
+
       if (toolMode.value === 'deconstruct') {
+        if (!isDeconstructibleTile(snapshot, click.x, click.y)) return;
         gameManager?.sendEvent({ type: 'deconstruct', x: click.x, y: click.y });
         markDirty();
       } else if (toolMode.value) {
+        if (!isBuildableTile(snapshot, props.contentPack, click.x, click.y)) return;
         gameManager?.sendEvent({ type: 'build', building: toolMode.value, x: click.x, y: click.y });
         markDirty();
       }
+    });
+    renderer.setOnSceneLineBuild(({ building, tiles }) => {
+      const snapshot = gameManager?.snapshot;
+      if (!snapshot) return;
+      let changed = false;
+      for (const tile of tiles) {
+        if (!isBuildableTile(snapshot, props.contentPack, tile.x, tile.y)) continue;
+        gameManager?.sendEvent({ type: 'build', building, x: tile.x, y: tile.y });
+        changed = true;
+      }
+      if (changed) markDirty();
+    });
+    renderer.setOnSceneRectDeconstruct(({ tiles }) => {
+      const snapshot = gameManager?.snapshot;
+      if (!snapshot) return;
+      let changed = false;
+      for (const tile of tiles) {
+        if (!isDeconstructibleTile(snapshot, tile.x, tile.y)) continue;
+        gameManager?.sendEvent({ type: 'deconstruct', x: tile.x, y: tile.y });
+        changed = true;
+      }
+      if (changed) markDirty();
     });
     renderer.startRenderLoop(() => renderer?.renderFrame());
   } catch (err) {
@@ -218,7 +247,11 @@ defineExpose({
     @select="loadFromSlot"
     @cancel="showLoadPicker = false"
   />
-  <Toolbar v-if="contentReady" :tool-mode="toolMode" @select-mode="(m) => (toolMode = m)" />
+  <Toolbar
+    v-if="contentReady"
+    :tool-mode="toolMode"
+    @select-mode="(m) => { toolMode = m; renderer?.setToolMode(m); }"
+  />
   <ColonistInfo v-if="contentReady" :colonist="selectedColonist" />
 </template>
 
