@@ -169,6 +169,11 @@ function setSpeed(s: number): void {
   markDirty();
 }
 
+function selectToolMode(m: ToolMode): void {
+  toolMode.value = m;
+  renderer?.setToolMode(m);
+}
+
 async function saveToSlot(slot: SaveId): Promise<void> {
   const snapshot = gameManager?.snapshot;
   if (!snapshot) {
@@ -250,7 +255,7 @@ defineExpose({
   <Toolbar
     v-if="contentReady"
     :tool-mode="toolMode"
-    @select-mode="(m) => { toolMode = m; renderer?.setToolMode(m); }"
+    @select-mode="selectToolMode"
   />
   <ColonistInfo v-if="contentReady" :colonist="selectedColonist" />
 </template>

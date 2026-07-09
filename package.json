@@ -18,6 +18,10 @@
     "build:desktop": "npm run build:desktop:assets && tauri build"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.4"
+    "@tauri-apps/cli": "^2.11.4",
+    "typescript": "~6.0.3"
+  },
+  "overrides": {
+    "typescript": "~6.0.3"
   }
 }
