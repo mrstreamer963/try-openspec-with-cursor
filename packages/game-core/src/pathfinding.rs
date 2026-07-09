@@ -4,6 +4,19 @@ use std::collections::{BinaryHeap, HashMap};
 use crate::content::ContentRegistry;
 use crate::world::WorldGrid;
 
+const SQRT_2: f32 = std::f32::consts::SQRT_2;
+
+const NEIGHBORS: [((i32, i32), f32); 8] = [
+    ((1, 0), 1.0),
+    ((-1, 0), 1.0),
+    ((0, 1), 1.0),
+    ((0, -1), 1.0),
+    ((1, 1), SQRT_2),
+    ((1, -1), SQRT_2),
+    ((-1, 1), SQRT_2),
+    ((-1, -1), SQRT_2),
+];
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct Node {
     x: i32,
@@ -11,8 +24,11 @@ struct Node {
 }
 
 impl Node {
-    fn manhattan(self, other: Node) -> i32 {
-        (self.x - other.x).abs() + (self.y - other.y).abs()
+    fn octile_distance(self, other: Node) -> f32 {
+        let dx = (self.x - other.x).abs();
+        let dy = (self.y - other.y).abs();
+        let d = 1.0_f32;
+        d * (dx + dy) as f32 + (SQRT_2 - 2.0 * d) * dx.min(dy) as f32
     }
 }
 
@@ -84,11 +100,9 @@ pub fn find_path_avoiding(
 
     g_score.insert(start_node, 0.0);
     open.push(Scored {
-        f: start_node.manhattan(goal_node) as f32,
+        f: start_node.octile_distance(goal_node),
         node: start_node,
     });
-
-    const DIRS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 
     while let Some(Scored { node: current, .. }) = open.pop() {
         if current == goal_node {
@@ -97,29 +111,51 @@ pub fn find_path_avoiding(
 
         let current_g = *g_score.get(&current).unwrap_or(&f32::INFINITY);
 
-        for (dx, dy) in DIRS {
+        for ((dx, dy), step_cost) in NEIGHBORS {
             let neighbor = Node {
                 x: current.x + dx,
                 y: current.y + dy,
             };
-            if !grid.is_walkable(content, neighbor.x, neighbor.y)
-                || is_blocked(neighbor.x, neighbor.y)
-            {
+            if !can_step(grid, content, current, dx, dy, &is_blocked) {
                 continue;
             }
 
-            let tentative = current_g + 1.0;
+            let tentative = current_g + step_cost;
             let prev = *g_score.get(&neighbor).unwrap_or(&f32::INFINITY);
             if tentative < prev {
                 came_from.insert(neighbor, current);
                 g_score.insert(neighbor, tentative);
-                let f = tentative + neighbor.manhattan(goal_node) as f32;
+                let f = tentative + neighbor.octile_distance(goal_node);
                 open.push(Scored { f, node: neighbor });
             }
         }
     }
 
     None
+}
+
+fn can_step(
+    grid: &WorldGrid,
+    content: &ContentRegistry,
+    from: Node,
+    dx: i32,
+    dy: i32,
+    is_blocked: &impl Fn(i32, i32) -> bool,
+) -> bool {
+    let nx = from.x + dx;
+    let ny = from.y + dy;
+    if !grid.is_walkable(content, nx, ny) || is_blocked(nx, ny) {
+        return false;
+    }
+    if dx != 0 && dy != 0 {
+        if !grid.is_walkable(content, from.x + dx, from.y) || is_blocked(from.x + dx, from.y) {
+            return false;
+        }
+        if !grid.is_walkable(content, from.x, from.y + dy) || is_blocked(from.x, from.y + dy) {
+            return false;
+        }
+    }
+    true
 }
 
 fn reconstruct(came_from: &HashMap<Node, Node>, mut current: Node) -> Vec<(i32, i32)> {
@@ -174,4 +210,83 @@ where
     }
 
     best.map(|(stand, _)| stand)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::content::base_content;
+    use crate::world::WORLD_SIZE;
+
+    fn test_content() -> ContentRegistry {
+        base_content()
+    }
+
+    fn grass_grid(content: &ContentRegistry) -> WorldGrid {
+        let len = (WORLD_SIZE * WORLD_SIZE) as usize;
+        WorldGrid {
+            terrain: vec![content.grass_terrain; len],
+            buildings: vec![None; len],
+            seed: 0,
+        }
+    }
+
+    fn path_has_diagonal_step(path: &[(i32, i32)]) -> bool {
+        path.windows(2).any(|w| {
+            let (x0, y0) = w[0];
+            let (x1, y1) = w[1];
+            (x1 - x0).abs() == 1 && (y1 - y0).abs() == 1
+        })
+    }
+
+    fn path_cost(path: &[(i32, i32)]) -> f32 {
+        path.windows(2)
+            .map(|w| {
+                let dx = (w[1].0 - w[0].0).abs();
+                let dy = (w[1].1 - w[0].1).abs();
+                if dx == 1 && dy == 1 {
+                    SQRT_2
+                } else {
+                    1.0
+                }
+            })
+            .sum()
+    }
+
+    #[test]
+    fn open_area_path_prefers_diagonal_shortcut() {
+        let content = test_content();
+        let grid = grass_grid(&content);
+
+        let path = find_path(&grid, &content, (0, 0), (4, 4)).expect("path should exist");
+
+        assert!(
+            path_has_diagonal_step(&path),
+            "expected diagonal waypoints, got {:?}",
+            path
+        );
+        assert!(
+            path_cost(&path) < 8.0,
+            "diagonal route should beat orthogonal-only cost of 8, got {}",
+            path_cost(&path)
+        );
+    }
+
+    #[test]
+    fn diagonal_step_blocked_when_corner_bounded_by_walls() {
+        let content = test_content();
+        let mut grid = grass_grid(&content);
+
+        assert!(grid.place_building(&content, 6, 5, content.wall_building));
+        assert!(grid.place_building(&content, 5, 6, content.wall_building));
+
+        let path = find_path(&grid, &content, (5, 5), (6, 6)).expect("path should exist");
+
+        assert!(
+            !path.windows(2).any(|w| w[0] == (5, 5) && w[1] == (6, 6)),
+            "corner-cutting diagonal should be blocked, got {:?}",
+            path
+        );
+        assert!(path.len() > 2, "path must route around the corner");
+    }
 }
